@@ -27,12 +27,5 @@ clean:
 	@echo "Removing object files from $(CURDIR)/build"
 	-rm -f build/*
 
-# purge
-.PHONY: purge
-purge:
-	@echo "Removing object files and build dependencies for $(CURDIR)"
-	-ls
-	-rm -rf build
-
 # dependencies
 build/convert: $(SRC)

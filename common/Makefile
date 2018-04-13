@@ -30,13 +30,6 @@ clean:
 	@echo "Removing object files from $(CURDIR)/build"
 	-rm -f build/*
 
-# purge
-.PHONY: purge
-purge:
-	@echo "Removing object files and build dependencies for $(CURDIR)"
-	-ls
-	-rm -rf build
-
 # dependencies
 build/particles.o: particles.cc particles.h primitives.h metagrid.h
 build/primitives.o: primitives.cc primitives.h

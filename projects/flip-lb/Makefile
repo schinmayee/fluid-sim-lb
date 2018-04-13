@@ -35,12 +35,5 @@ clean:
 	@echo "Removing object files from $(CURDIR)/build"
 	-rm -f build/*
 
-# purge
-.PHONY: purge
-purge:
-	@echo "Removing object files and build dependencies for $(CURDIR)"
-	-ls
-	-rm -rf build
-
 # dependencies
 build/water_app.o: water_app.cc water_app.h $(COMMON_FILES)
