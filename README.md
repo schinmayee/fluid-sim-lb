@@ -1,2 +1,1 @@
-# fluid-sim-lb
-Load balancing fluid simulations
+# Load Balancing Fluid Simulations
