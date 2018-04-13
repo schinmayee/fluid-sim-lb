@@ -1,7 +1,6 @@
 /*
  * Defines primitives such as vectors, coordinates and coordinate boxes, and
  * some useful operations over those primitives.
- * Author: Chinmayee Shah <chshah@stanford.edu>
  */
 
 #ifndef COMMON_PRIMITIVES_H
