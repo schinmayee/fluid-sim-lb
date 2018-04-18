@@ -1,0 +1,297 @@
+diff -ruN openvdb-4.0.1-original/openvdb/Makefile openvdb-4.0.1/openvdb/Makefile
+--- openvdb-4.0.1-original/openvdb/Makefile	2017-11-06 11:26:33.117659063 -0800
++++ openvdb-4.0.1/openvdb/Makefile	2017-05-30 18:48:48.508946598 -0700
+@@ -84,19 +84,19 @@
+ #
+ 
+ # The directory into which to install libraries, executables and header files
+-DESTDIR := /tmp/OpenVDB
++DESTDIR := $(HOME)/installations/openvdb_v4_0
+ 
+ # The parent directory of the boost/ header directory
+-BOOST_INCL_DIR := $(HT)/include
++BOOST_INCL_DIR := /home/chinmayee/installations/boost
+ # The directory containing libboost_iostreams, libboost_system, etc.
+-BOOST_LIB_DIR := $(HDSO)
++BOOST_LIB_DIR := /home/chinmayee/installations/boost/stage/lib
+ BOOST_LIB := -lboost_iostreams -lboost_system
+ BOOST_THREAD_LIB := -lboost_thread
+ 
+ # The parent directory of the OpenEXR/ header directory
+-EXR_INCL_DIR := $(HT)/include
++EXR_INCL_DIR := /usr/local/include
+ # The directory containing IlmImf
+-EXR_LIB_DIR := $(HDSO)
++EXR_LIB_DIR := /usr/local/lib
+ EXR_LIB := -lIlmImf
+ 
+ # The parent directory of the OpenEXR/ header directory (which contains half.h)
+@@ -107,69 +107,68 @@
+ HALF_LIB := -lHalf
+ 
+ # The parent directory of the tbb/ header directory
+-TBB_INCL_DIR := $(HT)/include
++TBB_INCL_DIR := /usr/local/include/tbb
+ # The directory containing libtbb
+-TBB_LIB_DIR := $(HDSO)
++TBB_LIB_DIR := /usr/lib/x86_64-linux-gnu
+ TBB_LIB := -ltbb
+ 
+ # The parent directory of the blosc.h header
+ # (leave blank if Blosc is unavailable)
+-BLOSC_INCL_DIR := $(HT)/include
++BLOSC_INCL_DIR :=
+ # The directory containing libblosc
+-BLOSC_LIB_DIR := $(HDSO)
+-BLOSC_LIB := -lblosc
++BLOSC_LIB_DIR :=
++BLOSC_LIB :=
+ 
+ # A scalable, concurrent malloc replacement library
+ # such as jemalloc (included in the Houdini HDK) or TBB malloc
+ # (leave blank if unavailable)
+-CONCURRENT_MALLOC_LIB := -ljemalloc
+-#CONCURRENT_MALLOC_LIB := -ltbbmalloc_proxy -ltbbmalloc
++CONCURRENT_MALLOC_LIB := -ltbbmalloc_proxy -ltbbmalloc
+ # The directory containing the malloc replacement library
+-CONCURRENT_MALLOC_LIB_DIR := $(HDSO)
++CONCURRENT_MALLOC_LIB_DIR := /usr/lib/x86_64-linux-gnu
+ 
+ # The parent directory of the cppunit/ header directory
+ # (leave blank if CppUnit is unavailable)
+-CPPUNIT_INCL_DIR := /rel/map/generic-2013.22/sys_include
++CPPUNIT_INCL_DIR := /usr/include
+ # The directory containing libcppunit
+-CPPUNIT_LIB_DIR := /rel/depot/third_party_build/cppunit/1.10.2-7/opt-ws5-x86_64-gccWS5_64/lib
++CPPUNIT_LIB_DIR := /usr/lib/x86_64-linux-gnu/
+ CPPUNIT_LIB := -lcppunit
+ 
+ # The parent directory of the log4cplus/ header directory
+ # (leave blank if log4cplus is unavailable)
+-LOG4CPLUS_INCL_DIR := /rel/folio/log4cplus/log4cplus-1.1.2-latest/sys_include
++LOG4CPLUS_INCL_DIR := /usr/include
+ # The directory containing liblog4cplus
+-LOG4CPLUS_LIB_DIR := /rel/folio/log4cplus/log4cplus-1.1.2-latest/library/c++11
++LOG4CPLUS_LIB_DIR := /usr/lib/x86_64-linux-gnu/
+ LOG4CPLUS_LIB := -llog4cplus
+ 
+ # The directory containing glfw.h
+ # (leave blank if GLFW is unavailable)
+-GLFW_INCL_DIR := /rel/third_party/glfw/glfw-3.0.1/include
++GLFW_INCL_DIR := /usr/local/include/
+ # The directory containing libglfw
+-GLFW_LIB_DIR := /rel/third_party/glfw/glfw-3.0.1/lib
+-GLFW_LIB := -lglfw
++GLFW_LIB_DIR := /usr/local/lib
++GLFW_LIB := -lglfw3 -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread
+ # The major version number of the GLFW library
+ # (header filenames changed between GLFW 2 and 3, so this must be specified explicitly)
+ GLFW_MAJOR_VERSION := 3
+ 
+ # The version of Python for which to build the OpenVDB module
+ # (leave blank if Python is unavailable)
+-PYTHON_VERSION := 2.7
++PYTHON_VERSION :=
+ # The directory containing Python.h
+-PYTHON_INCL_DIR := $(HFS)/python/include/python$(PYTHON_VERSION)
++PYTHON_INCL_DIR :=
+ # The directory containing pyconfig.h
+-PYCONFIG_INCL_DIR := $(PYTHON_INCL_DIR)
++PYCONFIG_INCL_DIR :=
+ # The directory containing libpython
+-PYTHON_LIB_DIR := $(HFS)/python/lib
+-PYTHON_LIB := -lpython$(PYTHON_VERSION)
++PYTHON_LIB_DIR :=
++PYTHON_LIB :=
+ # The directory containing libboost_python
+-BOOST_PYTHON_LIB_DIR := /rel/config/studio/baseline/boost/1.55.0.0/gcc-4.8.1.0/python-2.7.10.0/ext/lib/
+-BOOST_PYTHON_LIB := -lboost_python-mt
++BOOST_PYTHON_LIB_DIR :=
++BOOST_PYTHON_LIB := 
+ # The directory containing arrayobject.h
+ # (leave blank if NumPy is unavailable)
+-NUMPY_INCL_DIR := /rel/lang/python/2.7.9-1/lib/python2.7/site-packages/numpy/core/include/numpy/
++NUMPY_INCL_DIR :=
+ # The Epydoc executable
+ # (leave blank if Epydoc is unavailable)
+-EPYDOC := /rel/map/generic_default-2014.24.237/bin/epydoc
++EPYDOC :=
+ # Set PYTHON_WRAP_ALL_GRID_TYPES to "yes" to specify that the Python module
+ # should expose (almost) all of the grid types defined in openvdb.h
+ # Otherwise, only FloatGrid, BoolGrid and Vec3SGrid will be exposed
+diff -ruN openvdb-4.0.1-original/openvdb/math/ConjGradient.h openvdb-4.0.1/openvdb/math/ConjGradient.h
+--- openvdb-4.0.1-original/openvdb/math/ConjGradient.h	2017-11-06 11:26:33.133659411 -0800
++++ openvdb-4.0.1/openvdb/math/ConjGradient.h	2017-11-20 16:10:47.150179399 -0800
+@@ -275,7 +275,8 @@
+     static const ValueType sZeroValue;
+ 
+     /// Construct an @a n x @a n matrix with at most @a STENCIL_SIZE nonzero elements per row.
+-    SparseStencilMatrix(SizeType n);
++    SparseStencilMatrix(SizeType nrows);
++    SparseStencilMatrix(SizeType nrows, SizeType ncols);
+ 
+     /// Deep copy the given matrix.
+     SparseStencilMatrix(const SparseStencilMatrix&);
+@@ -283,6 +284,7 @@
+     //@{
+     /// Return the number of rows in this matrix.
+     SizeType numRows() const { return mNumRows; }
++    SizeType numCols() const { return mNumCols; }
+     SizeType size() const { return mNumRows; }
+     //@}
+ 
+@@ -477,6 +479,7 @@
+     template<typename OtherValueType> struct EqOp;
+ 
+     const SizeType                  mNumRows;
++    const SizeType                  mNumCols;
+     boost::scoped_array<ValueType>  mValueArray;
+     boost::scoped_array<SizeType>   mColumnIdxArray;
+     boost::scoped_array<SizeType>   mRowSizeArray;
+@@ -848,7 +851,20 @@
+ template<typename ValueType, SizeType STENCIL_SIZE>
+ inline
+ SparseStencilMatrix<ValueType, STENCIL_SIZE>::SparseStencilMatrix(SizeType numRows)
+-    : mNumRows(numRows)
++    : mNumRows(numRows), mNumCols(numRows)
++    , mValueArray(new ValueType[mNumRows * STENCIL_SIZE])
++    , mColumnIdxArray(new SizeType[mNumRows * STENCIL_SIZE])
++    , mRowSizeArray(new SizeType[mNumRows])
++{
++    // Initialize the matrix to a null state by setting the size of each row to zero.
++    tbb::parallel_for(SizeRange(0, mNumRows),
++        internal::FillOp<SizeType>(mRowSizeArray.get(), /*value=*/0));
++}
++
++template<typename ValueType, SizeType STENCIL_SIZE>
++inline
++SparseStencilMatrix<ValueType, STENCIL_SIZE>::SparseStencilMatrix(SizeType numRows, SizeType numCols)
++    : mNumRows(numRows), mNumCols(numCols)
+     , mValueArray(new ValueType[mNumRows * STENCIL_SIZE])
+     , mColumnIdxArray(new SizeType[mNumRows * STENCIL_SIZE])
+     , mRowSizeArray(new SizeType[mNumRows])
+@@ -884,7 +900,7 @@
+ template<typename ValueType, SizeType STENCIL_SIZE>
+ inline
+ SparseStencilMatrix<ValueType, STENCIL_SIZE>::SparseStencilMatrix(const SparseStencilMatrix& other)
+-    : mNumRows(other.mNumRows)
++    : mNumRows(other.mNumRows), mNumCols(other.mNumCols)
+     , mValueArray(new ValueType[mNumRows * STENCIL_SIZE])
+     , mColumnIdxArray(new SizeType[mNumRows * STENCIL_SIZE])
+     , mRowSizeArray(new SizeType[mNumRows])
+@@ -967,7 +983,7 @@
+     {
+         for (SizeType n = range.begin(), N = range.end(); n < N; ++n) {
+             ConstRow row = mat->getConstRow(n);
+-            out[n] = row.dot(in, mat->numRows());
++            out[n] = row.dot(in, mat->numCols());
+         }
+     }
+ 
+@@ -983,7 +999,7 @@
+ SparseStencilMatrix<ValueType, STENCIL_SIZE>::vectorMultiply(
+     const Vector<VecValueType>& inVec, Vector<VecValueType>& resultVec) const
+ {
+-    if (inVec.size() != mNumRows) {
++    if (inVec.size() != mNumCols) {
+         OPENVDB_THROW(ArithmeticError, "matrix and input vector have incompatible sizes ("
+             << mNumRows << "x" << mNumRows << " vs. " << inVec.size() << ")");
+     }
+@@ -1097,7 +1113,7 @@
+ {
+     assert(i < mNumRows);
+     const SizeType head = i * STENCIL_SIZE;
+-    return RowEditor(&mValueArray[head], &mColumnIdxArray[head], mRowSizeArray[i], mNumRows);
++    return RowEditor(&mValueArray[head], &mColumnIdxArray[head], mRowSizeArray[i], mNumCols);
+ }
+ 
+ 
+@@ -1438,6 +1454,7 @@
+             typename MatrixType::ConstValueIter citer = srcRow.cbegin();
+             for ( ; citer; ++citer) {
+                 SizeType ii = citer.column();
++                if (ii >= numRows) continue; // block IC
+                 if (ii < k+1) continue; // look above diagonal
+ 
+                 TriangleRowEditor row_ii = mLowerTriangular.getRowEditor(ii);
+@@ -1449,6 +1466,7 @@
+             citer.reset(); // k,j entries
+             for ( ; citer; ++citer) {
+                 SizeType j = citer.column();
++                if (j >= numRows) continue;  // block IC
+                 if (j < k+1) continue;
+ 
+                 TriangleConstRow row_j = mLowerTriangular.getConstRow(j);
+@@ -1621,9 +1639,9 @@
+ inline void
+ computeResidual(const MatrixOperator& A, const Vector<T>& x, const Vector<T>& b, Vector<T>& r)
+ {
+-    assert(x.size() == b.size());
+-    assert(x.size() == r.size());
+-    assert(x.size() == A.numRows());
++    assert(b.size() == A.numRows());
++    assert(b.size() == r.size());
++    assert(x.size() == A.numCols());
+ 
+     computeResidual(A, x.data(), b.data(), r.data());
+ }
+diff -ruN openvdb-4.0.1-original/openvdb/openvdb.cc openvdb-4.0.1/openvdb/openvdb.cc
+--- openvdb-4.0.1-original/openvdb/openvdb.cc	2017-11-06 11:26:33.129659324 -0800
++++ openvdb-4.0.1/openvdb/openvdb.cc	2017-06-06 17:53:28.030319182 -0700
+@@ -100,6 +100,15 @@
+     Vec3IGrid::registerGrid();
+     Vec3SGrid::registerGrid();
+     Vec3DGrid::registerGrid();
++    BoolGrid_3_3::registerGrid();
++    MaskGrid_3_3::registerGrid();
++    FloatGrid_3_3::registerGrid();
++    DoubleGrid_3_3::registerGrid();
++    Int32Grid_3_3::registerGrid();
++    Int64Grid_3_3::registerGrid();
++    Vec3IGrid_3_3::registerGrid();
++    Vec3SGrid_3_3::registerGrid();
++    Vec3DGrid_3_3::registerGrid();
+ 
+     // Register types associated with point index grids.
+     Metadata::registerType(typeNameAsString<PointIndex32>(), Int32Metadata::createMetadata);
+diff -ruN openvdb-4.0.1-original/openvdb/openvdb.h openvdb-4.0.1/openvdb/openvdb.h
+--- openvdb-4.0.1-original/openvdb/openvdb.h	2017-11-06 11:26:33.129659324 -0800
++++ openvdb-4.0.1/openvdb/openvdb.h	2017-06-06 17:52:48.949539092 -0700
+@@ -83,6 +83,26 @@
+ using Vec3fGrid    = Vec3SGrid;
+ using VectorGrid   = Vec3fGrid;
+ 
++using  MaskTree_3_3   = tree::Tree3<ValueMask,   3, 3>::Type;
++using  BoolTree_3_3   = tree::Tree3<bool,        3, 3>::Type;
++using  FloatTree_3_3  = tree::Tree3<float,       3, 3>::Type;
++using  DoubleTree_3_3 = tree::Tree3<double,      3, 3>::Type;
++using  Int32Tree_3_3  = tree::Tree3<int32_t,     3, 3>::Type;
++using  UInt32Tree_3_3 = tree::Tree3<uint32_t,    3, 3>::Type;
++using  Int64Tree_3_3  = tree::Tree3<int64_t,     3, 3>::Type;
++using  Vec3ITree_3_3  = tree::Tree3<Vec3i,       3, 3>::Type;
++using  Vec3STree_3_3  = tree::Tree3<Vec3f,       3, 3>::Type;
++using  Vec3DTree_3_3  = tree::Tree3<Vec3d,       3, 3>::Type;
++using MaskGrid_3_3   = Grid<MaskTree_3_3>;
++using BoolGrid_3_3   = Grid<BoolTree_3_3>;
++using FloatGrid_3_3  = Grid<FloatTree_3_3>;
++using DoubleGrid_3_3 = Grid<DoubleTree_3_3>;
++using Int32Grid_3_3  = Grid<Int32Tree_3_3>;
++using Int64Grid_3_3  = Grid<Int64Tree_3_3>;
++using Vec3IGrid_3_3  = Grid<Vec3ITree_3_3>;
++using Vec3SGrid_3_3  = Grid<Vec3STree_3_3>;
++using Vec3DGrid_3_3  = Grid<Vec3DTree_3_3>;
++
+ /// Global registration of basic types
+ OPENVDB_API void initialize();
+ 
+diff -ruN openvdb-4.0.1-original/openvdb/tools/VelocityFields.h openvdb-4.0.1/openvdb/tools/VelocityFields.h
+--- openvdb-4.0.1-original/openvdb/tools/VelocityFields.h	2017-11-06 11:26:33.145659672 -0800
++++ openvdb-4.0.1/openvdb/tools/VelocityFields.h	2017-07-18 21:55:59.683226431 -0700
+@@ -53,6 +53,7 @@
+ #define OPENVDB_TOOLS_VELOCITY_FIELDS_HAS_BEEN_INCLUDED
+ 
+ #include <tbb/parallel_reduce.h>
++#include <openvdb/openvdb.h>
+ #include <openvdb/Platform.h>
+ #include "Interpolation.h" // for Sampler, etc.
+ #include <openvdb/math/FiniteDifference.h>
