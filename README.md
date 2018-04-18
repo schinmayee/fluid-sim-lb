@@ -20,7 +20,10 @@ this project:
 - [Boost](https://www.boost.org/)
 - [Google flags](https://gflags.github.io/gflags/)
 - [Google logging library](https://github.com/google/glog)
-- [Canary](https://github.com/quhang/canary)
+- [Canary](https://github.com/quhang/canary), you will need to use the
+  [`lb`](https://github.com/quhang/canary/tree/lb)
+  branch that includes updates to use custom partition assignments computed by
+  application and track simulation time at the controller.
 
 The code has been tested with g++ 5.4, OpenVDB 4.0.1 and Boost 1.61.0 on
 Ubuntu 16.04.
