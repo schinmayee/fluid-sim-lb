@@ -72,6 +72,9 @@ class VectorGrid {
 		inline bool isOn(Coord c) const {
 			return accessor_.isValueOn(c);
 		}
+    inline void fill(const CoordBBox &box, Vec3T value, bool active=true) {
+      accessor_.getTree()->fill(box, value, active);
+    }
 		inline typename GridT::Ptr data() { return data_; }
 		inline typename GridT::Ptr const_data() const { return data_; }
 
@@ -130,21 +133,6 @@ class VectorGrid {
       ar(background_[0], background_[1], background_[2]);
       CoordBBox bbox = data_->evalActiveVoxelBoundingBox();
       SerializeDense(bbox, ar);
-      //bbox.expand(metagrid_.bbox());
-      //const Coord start = bbox.min();
-      //const Coord end = bbox.max();
-      //ar(start[0], start[1], start[2]);
-      //ar(end[0], end[1], end[2]);
-      //for (int i = start[0]; i <= end[0]; ++i) {
-      //  for (int j = start[1]; j <= end[1]; ++j) {
-      //    for (int k = start[2]; k <= end[2]; ++k) {
-      //      Coord c(i, j, k);
-      //      bool mask = isOn(c);
-      //      Vec3T v = get(c);
-      //      ar(mask, v[0], v[1], v[2]);
-      //    }  // for k
-      //  }  // for j
-      //}  // for i
     }
     template <class Archive>
     void load(Archive &ar) {
@@ -152,23 +140,6 @@ class VectorGrid {
       ar(background_[0], background_[1], background_[2]);
       InitializePartition(metagrid_, staggered_, voxel_len_, background_, name_);
       DeserializeHelper(ar);
-      //Coord start, end;
-      //ar(start[0], start[1], start[2]);
-      //ar(end[0], end[1], end[2]);
-      //for (int i = start[0]; i <= end[0]; ++i) {
-      //  for (int j = start[1]; j <= end[1]; ++j) {
-      //    for (int k = start[2]; k <= end[2]; ++k) {
-      //      Coord c(i, j, k);
-      //      int si, sj, sk;
-      //      bool mask;
-      //      Vec3T v;
-      //      ar(mask, v[0], v[1], v[2]);
-      //      if (mask) {
-      //        set(i, j, k, v);
-      //      }
-      //    }  // for k
-      //  }  // for j
-      //}  // for i
     }
 
     // Extrpolate non-normal components into boundary.

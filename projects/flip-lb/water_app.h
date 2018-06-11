@@ -16,8 +16,9 @@ class MainSimulationDriver : public FlipDriver {
 
     MainSimulationDriver(
       WaterApp *water_app, const SimulationParameters &params,
-      const ProfileParameters &profile_params, std::string name = "Main")
-      : FlipDriver(water_app, params, profile_params, name) {}
+      const ProfileParameters &profile_params,
+      const SimulationConfiguration &config, std::string name = "Main")
+      : FlipDriver(water_app, params, profile_params, config, name) {}
 
     // Simulation loop.
     virtual void RunSimulation(int num_frames);
@@ -29,8 +30,9 @@ class CoarseSimulationDriver : public FlipDriver {
 
     CoarseSimulationDriver(
       WaterApp *water_app, const SimulationParameters &params,
-      const ProfileParameters &profile_params, std::string name = "Coarse")
-      : FlipDriver(water_app, params, profile_params, name) {}
+      const ProfileParameters &profile_params,
+      const SimulationConfiguration &config, std::string name = "Coarse")
+      : FlipDriver(water_app, params, profile_params, config, name) {}
 
     // Simulation loop.
     virtual void RunSimulation(int num_frames);

@@ -60,7 +60,7 @@ void FlipDriver::Initialize() {
       grid_divergence_str_,
       grid_pressure_str_,
       grid_marker_str_,
-      grid_source_str_,
+      grid_solid_str_,
       particles_str_
     };
     GetReadWriteAccess(read, write);
@@ -70,142 +70,118 @@ void FlipDriver::Initialize() {
 
       FlipSimulationT *simulation = SetVariables(task_context, read, write);
 
+      // Scale gravity.
+      T scaled_gravity = config_.gravity * (T(params_.global_dims[1])/128.0);
+      LOG(INFO) << name_ << ": Setting gravity to " << scaled_gravity;
+
       // Initialize metadata and variables.
       int rank = task_context->GetPartitionId();
-      T gravity = params_.gravity;
       simulation->InitializeMetadata(
         params_.global_dims, params_.partitions, rank,
-        T(1.0), params_.nparticles, params_.gravity, params_.flip_factor,
+        T(1.0), params_.nparticles, scaled_gravity, params_.flip_factor,
         params_.output_dir, params_.debug);
       simulation->InitializeVariables();
       VLOG(1) << name_ << ": Variables and metadata initialized ...";
 
-      // Initialize simulation condition.
-      int init = (params_.init > 10)? 1 : params_.init;
-      switch(init) {
-        case 1: {
-          T height = T(params_.global_dims[1])/T(16);
-          common::Vec3<T> center(
-            T(params_.global_dims[0])/T(2), T(6)*T(params_.global_dims[1])/T(8),
-            T(params_.global_dims[2])/T(2));
-          T radius = 0.66*T(params_.global_dims[1])/T(4);
-          simulation->InitializeWaterDrop(height, center, radius);
-          VLOG(1) << name_ << ": Initialized water sphere drop ...";
-          break;
-        }
-        case 2: {
-          T width  = T(params_.global_dims[0]*3/8);
-          T height = T(params_.global_dims[1]*5/8);
-          T depth = T(params_.global_dims[2]/2);
-          simulation->InitializeOneWayDamBreak(width, height, depth);
-          VLOG(1) << name_ << ": Initialized one way dam break ...";
-          break;
-        }
-        case 3: {
-          T height = T(params_.global_dims[1])/8;
-          simulation->InitializeDisturbance(height);
-          VLOG(1) << name_ << ": Initialized disturbance ...";
-          break;
-        }
-        case 4: {
-          T height = T(params_.global_dims[1])/T(64);
-          const int num_spheres = 8;
-          std::vector<common::Vec3<T>> centers;
-          std::vector<T> radii;
-          for (int i = 0; i < num_spheres; ++i) {
-            int x = i%2;
-            int y = (i/2)%2;
-            int z = i/4;
-            float cx = T((2*x+1)*params_.global_dims[0]/4);
-            float cy = T((2*y+2)*params_.global_dims[1]/5);
-            float cz = T((2*z+1)*params_.global_dims[2]/4);
-            float radius = T(params_.global_dims[0]*(num_spheres+i)/(12*num_spheres));
-            centers.push_back(common::Vec3<T>(cx, cy, cz));
-            radii.push_back(radius);
-          }
-          simulation->InitializeMultipleWaterDrops(height, centers, radii);
-          break;
-        }
-        case 5: {
-          T height = T(params_.global_dims[1])*params_.end.y();
-          const int num_spheres = 4;
-          std::vector<common::Vec3<T>> centers;
-          std::vector<T> radii;
-          for (int i = 0; i < num_spheres; ++i) {
-            int x = i%2;
-            int z = i/2;
-            float cx = T((2*x+1)*params_.global_dims[0]/4);
-            float cy = T(3*params_.global_dims[1]/4);
-            float cz = T((2*z+1)*params_.global_dims[2]/4);
-            float radius = T(params_.global_dims[0]/8)*1.5;
-            centers.push_back(common::Vec3<T>(cx, cy, cz));
-            radii.push_back(radius);
-          }
-          simulation->InitializeMultipleWaterDrops(height, centers, radii);
-          break;
-        }
-        case 6: {
-          T ax = T(1*params_.global_dims[0]/8);
-          T ay = T(params_.global_dims[1]*6.5/8);
-          T az = T(2*params_.global_dims[2]/8);
-          T fx = params_.gravity;
-          T fy = params_.gravity*0.1;
-          T fz = params_.gravity;
-          simulation->InitializeSloshingTank(0, ax, 0, ay, 0, az, fx, fy, fz);
-          break;
-        }
-        case 7: {
-          T height = T(params_.global_dims[1]);
-          T width  = T(params_.global_dims[0])/2.0;
-          T depth  = T(params_.global_dims[0])/2.0;
-          simulation->InitializeOneWayDamBreak(width, height, depth);
-          break;
-        }
-        case 8: {
-          T height = T(params_.global_dims[1])*params_.end.y();
-          std::vector<common::Vec3<T>> centers;
-          std::vector<T> radii;
-          float cx = T(params_.global_dims[0]/4);
-          float cy = T(params_.global_dims[1]*3/4);
-          float cz = T(params_.global_dims[2]*5/8);
-          float radius = T(params_.global_dims[0]/4)*0.8*params_.end.x();
-          centers.push_back(common::Vec3<T>(cx, cy, cz));
-          radii.push_back(radius);
-          simulation->InitializeMultipleWaterDrops(height, centers, radii);
-          break;
-        }
-        case 9: {
-          T ex = params_.end.x() * T(params_.global_dims[0]);
-          T ey = params_.end.y() * T(params_.global_dims[1]);
-          T ez = params_.end.z() * T(params_.global_dims[2]);
-          LOG(INFO) << "Dam params: " << "Width " << ex << ", Height " << ey
-                    << ", Depth " << ez;
-          simulation->InitializeOneWayDamBreak(ex, ey, ez);
-          break;
-        }
-        case 10: {
-          T sx = params_.start.x() * T(params_.global_dims[0]);
-          T sy = params_.start.y() * T(params_.global_dims[1]);
-          T sz = params_.start.z() * T(params_.global_dims[2]);
-          T ex = params_.end.x() * T(params_.global_dims[0]);
-          T ey = params_.end.y() * T(params_.global_dims[1]);
-          T ez = params_.end.z() * T(params_.global_dims[2]);
-          T fx = params_.force.x() * params_.gravity;
-          T fy = params_.force.y() * params_.gravity;
-          T fz = params_.force.z() * params_.gravity;
-          LOG(INFO) << "Tank params: Width " << sx << " to " << ex
-                    << ", Height " << sy << " to " << ey
-                    << ", Depth" << sz << " to " << ez
-                    << "Force " << fx << "," << fy << "," << fz;
-          simulation->InitializeSloshingTank(sx, ex, sy, ey, sz, ez, fx, fy, fz);
-          break;
-        }
-        default: {
-          std::cerr << name_ << ": Initialize simulation in invalid branch!!";
-          VLOG(1) << "Init = " << init;
-          assert(false);
-        }
-      };  // switch
+      // Set forces. Scale forces by gravity.
+      const common::Vec3<T> forces = config_.force * scaled_gravity;
+      simulation->SetForces(forces);
+      LOG(INFO) << name_ << ": Initialized external force "
+                << common::ToString(forces);
+
+      // Initialize sources, followed by solids and in the end fluids.
+      // It is important to intiialize solids before fluids so that there is
+      // no fluid where there are solids.
+      // Solids includes boundaries.
+
+      // Initialize sources.
+      for (const auto &source : config_.sources) {
+        Source<T> src_cpy = source;
+        src_cpy.ScaleBox(params_.global_dims);
+        src_cpy.ScaleVelocity(scaled_gravity);
+        simulation->AddWaterSource(src_cpy);
+        LOG(INFO) << name_ << ": Initialized water source "
+                  << src_cpy.ToString();
+      }  // for source
+
+      // Initialize boundaries.
+      const int boundary = config_.boundary;
+      CHECK(boundary >= 0 && boundary <= 1) << "Expected boundary parameter "
+        << " to be either 0 or 1. 0 is box boundary, 1 is tank boudnary.";
+      if (boundary == 0) {
+        simulation->SetBoxBoundary();
+        LOG(INFO) << name_ << ": Initialized box boundary";
+      } else {
+        simulation->SetTankBoundary();
+        LOG(INFO) << name_ << ": Initialized tank boundary";
+      }  // if boundary
+
+      // Initialize other solids, not boundary.
+      for (const auto &solid : config_.solids) {
+        CHECK(solid.shape->IsCube()) << "Only cuboid solids supported.";
+        CubeT cube(static_cast<CubeT &>(*(solid.shape)));
+        cube.Scale(params_.global_dims);
+        const common::CoordBBox box = cube.get_coord_bbox();
+        simulation->AddSolidCuboid(box);
+        LOG(INFO) << name_ << ": Initialized solid with dimensions "
+                  << common::ToString(box);
+      }  // for solid
+
+      // Finally initialize fluid --- first the default/background given by
+      // fluid parameter, and then add additional fluids.
+      const int init = config_.fluid;
+      CHECK(init >= 0 && init <= 2) << "Expected fluid parameter one of "
+        << "0, 1 or 2. 0 is for no default fluids, 1 for sphere drop, "
+        << "2 for dam break.";
+      if (init == 0) {
+        LOG(INFO) << name_ << ": No default fluids";
+      } else if (init == 1) {
+        T height = T(params_.global_dims[1]/4);
+        std::vector<common::Vec3<T>> centers;
+        std::vector<T> radii;
+        float cx = T(params_.global_dims[0]/2);
+        float cy = T(params_.global_dims[1]*3/4);
+        float cz = T(params_.global_dims[2]*5/8);
+        float radius = T(params_.global_dims[0]/4)*0.8;
+        centers.push_back(common::Vec3<T>(cx, cy, cz));
+        radii.push_back(radius);
+        simulation->InitializeMultipleWaterDrops(height, centers, radii);
+        LOG(INFO) << name_ << ": Sphere drop: Sphere radius " << radius
+                  << ", center " << cx << "," << cy << "," << cz
+                  << ", reservoir height " << height;
+      } else if (init == 2) {
+        common::Vec3<T> start(0);
+        common::Vec3<T> end;
+        end.x() = T(params_.global_dims[0]/4)-1;
+        end.y() = T(params_.global_dims[1]*3/4)-1;
+        end.z() = T(params_.global_dims[2])-1;
+        common::Cube<T> cube(start, end);
+        simulation->InitializeWaterCuboid(cube, common::Vec3<T>(0));
+        LOG(INFO) << name_ << ": Initialized tank with dimensions: "
+                  << cube.ToString();
+      }  // if init ...
+      // Additional fluids.
+      for (const auto &fluid : config_.additional_fluids) {
+        if (fluid.shape->IsCube()) {
+          CubeT cube(static_cast<CubeT &>(*(fluid.shape)));
+          cube.Scale(params_.global_dims);
+          cube.set_end(cube.get_end() - common::Vec3<T>(1));
+          simulation->InitializeWaterCuboid(cube, fluid.velocity*scaled_gravity);
+          LOG(INFO) << name_ << ": Initialized water cube with dimensions "
+                    << cube.ToString();
+        } else {
+          CHECK(fluid.shape->IsSphere()) << "Only cuboid and spherical fluid "
+                                         << "shapes supported.";
+          SphereT sphere(static_cast<SphereT &>(*(fluid.shape)));
+          sphere.Scale(params_.global_dims);
+          simulation->InitializeWaterSphere(
+              sphere.get_center(), sphere.get_radius(),
+              fluid.velocity*scaled_gravity);
+          LOG(INFO) << name_ << ": Initialized water sphere with center "
+                    << common::ToString(sphere.get_center())
+                    << " and radius " << sphere.get_radius();
+        }  // if IsCube else ...
+      }  // for fluid
 
       ResetVariables(simulation);
     }, name_ + "_Init");  // Transform
@@ -233,9 +209,13 @@ void FlipDriver::Initialize() {
  * Run one time step.
  */
 void FlipDriver::RunOneStep() {
+  // Mark sources.
+  AddSources();
   // Move particles in grid velocity.
   MoveParticles();
   SaveDebugData();  // 1
+  // Delete fluid from sources/reset them for rest of the simulation.
+  DeleteSources();
 
   // Clear grid data.
   ClearGridData();
@@ -259,6 +239,7 @@ void FlipDriver::RunOneStep() {
   // Apply boundary conditions.
   ApplyBoundaryConditions();
   SaveDebugData();  // 7
+
   // Make incompressible.
   MakeIncompressible();
   SaveDebugData();  // 8
@@ -413,17 +394,19 @@ void FlipDriver::WhileAndComputeDt() {
     T *step = task_context->WriteVariable(*step_);
     *global_dt = 1.0/params_.frame_step;
     *global_dt = task_context->Reduce(*global_dt, min<T>);
-    if (*global_dt < params_.frame_step/100) {
-      *global_dt = params_.frame_step/100;
+    if (*global_dt < params_.frame_step/10) {
+      *global_dt = params_.frame_step/10;
       VLOG(1) << "Capping dt to " << *global_dt;
     }
     VLOG(1) << "Reduced dt = " << *global_dt;
-    //*global_dt = .5;
     if (*step + *global_dt > params_.frame_step) {
       *global_dt = params_.frame_step - *step;
     }
+    if (*step + *global_dt > 0.9*params_.frame_step) {
+      *global_dt = params_.frame_step - *step;
+    }
     assert(*global_dt > 0);
-    VLOG(1) << name_ << ": Final dt = " << *global_dt;
+    LOG(INFO) << name_ << ": Final dt = " << *global_dt;
     (*step) += (*global_dt);
     VLOG(1) << name_ << ": Step = " << *step;
     return 0;
@@ -478,9 +461,41 @@ void FlipDriver::AdvanceTime() {
   }, name_ + "_UpdateLocalAdvancedTime"); 
 }  // AdvanceTime
 
+void FlipDriver::AddSources() {
+  std::vector<std::string> read = {};
+  std::vector<std::string> write = {
+    simulation_str_, grid_marker_str_, grid_velocity_str_, particles_str_ };
+  GetReadWriteAccess(read, write);
+  app_->ReadAccess(*advanced_time_);
+  app_->Transform([=](canary::CanaryTaskContext *task_context) {
+    VLOG(1) << name_ << ": AddSources transform start ...";
+    T advanced_time = task_context->ReadVariable(*advanced_time_);
+    FlipSimulationT *simulation = SetVariables(task_context, read, write);
+    simulation->AddContributionFromSources(advanced_time);
+    ResetVariables(simulation);
+    VLOG(1) << name_ << ": AddSources transform end ...";
+  }, name_ + "_AddSources");
+}  // AddSources
+
+void FlipDriver::DeleteSources() {
+  std::vector<std::string> read = {};
+  std::vector<std::string> write = {
+    simulation_str_, particles_str_ };
+  GetReadWriteAccess(read, write);
+  app_->ReadAccess(*advanced_time_);
+  app_->Transform([=](canary::CanaryTaskContext *task_context) {
+    VLOG(1) << name_ << ": DeleteSources transform start ...";
+    T advanced_time = task_context->ReadVariable(*advanced_time_);
+    FlipSimulationT *simulation = SetVariables(task_context, read, write);
+    simulation->DeleteFluidInSources(advanced_time);
+    ResetVariables(simulation);
+    VLOG(1) << name_ << ": DeleteSources transform end ...";
+  }, name_ + "_DeleteSources");
+}  // DeleteSources
+
 void FlipDriver::MoveParticles() {
   // Move particles (update particle positions) using grid velocity.
-  std::vector<std::string> read = {grid_velocity_str_};
+  std::vector<std::string> read = { grid_solid_str_, grid_velocity_str_ };
   std::vector<std::string> write = { simulation_str_, particles_str_ };
   GetReadWriteAccess(read, write);
   app_->ReadAccess(*local_dt_);
@@ -489,14 +504,16 @@ void FlipDriver::MoveParticles() {
     const T &dt = task_context->ReadVariable(*local_dt_);
     FlipSimulationT *simulation = SetVariables(task_context, read, write);
     simulation->MoveParticles(dt, true);
+    // Delete particles inside solids.
+    simulation->DeleteParticlesInSolids();
     ResetVariables(simulation);
     VLOG(1) << name_ << ": MoveParticles transform end ...";
   }, name_ + "_MoveParticles");
 
   // Exchange particles that have moved out + 1 layer ghost particles for
   // transferring particle velocities to grid correctly.
-  SendParticles(1, true);
-  ReceiveParticles(1);
+  SendParticles(2, true);
+  ReceiveParticles(2);
 }  // MoveParticles
 
 void FlipDriver::ClearGridData() {
@@ -505,8 +522,7 @@ void FlipDriver::ClearGridData() {
   std::vector<std::string> write = {
     simulation_str_,
     grid_velocity_str_, grid_velocity_update_str_, grid_weight_str_,
-    grid_phi_str_, grid_divergence_str_, grid_marker_str_, grid_source_str_,
-    grid_pressure_str_ };
+    grid_phi_str_, grid_divergence_str_, grid_marker_str_, grid_pressure_str_ };
   GetReadWriteAccess(read, write);
   app_->Transform([=](canary::CanaryTaskContext *task_context) {
     VLOG(1) << name_ << ": ClearGridData start ...";
@@ -612,7 +628,7 @@ void FlipDriver::AdvanceGridVelocity() {
     VLOG(1) << name_ << ": AdvanceGridVelocity start ...";
     const T &dt = task_context->ReadVariable(*local_dt_);
     FlipSimulationT *simulation = SetVariables(task_context, read, write);
-    simulation->AddGravity(dt, true);
+    simulation->AddGravity(dt);
     ResetVariables(simulation);
     VLOG(1) << name_ << ": AdvanceGridVelocity end ...";
   }, name_ + "_AdvanceGridVelocity");
@@ -666,7 +682,7 @@ void FlipDriver::MakeIncompressible() {
 }  // MakeIncompressible
 
 void FlipDriver::ApplyBoundaryConditions() {
-  std::vector<std::string> read = { grid_source_str_ };
+  std::vector<std::string> read = { grid_solid_str_ };
   std::vector<std::string> write = {
     simulation_str_, grid_marker_str_, grid_velocity_str_ };
   GetReadWriteAccess(read, write);

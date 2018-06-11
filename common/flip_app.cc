@@ -1,6 +1,10 @@
+#define BOOST_NO_CXX11_SCOPED_ENUMS
+#include <boost/filesystem.hpp>
+#undef BOOST_NO_CXX11_SCOPED_ENUMS
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include "canary/canary.h"
@@ -39,21 +43,24 @@ void FlipApp::LoadParameter(const std::string &params) {
     if (ngrid > 0) {
       params_.global_dims = common::Coord(ngrid);
     }
+
     LoadFlag("frame_rate", params_.frame_rate, archive);
     params_.frame_step = T(1) / T(params_.frame_rate);
     LoadFlag("cfl", params_.cfl, archive);
 
-    LoadFlag("init", params_.init, archive);
-    LoadFlag("gravity", params_.gravity, archive);
-    LoadFlag("sx", params_.start[0], archive);
-    LoadFlag("sy", params_.start[1], archive);
-    LoadFlag("sz", params_.start[2], archive);
-    LoadFlag("ex", params_.end[0], archive);
-    LoadFlag("ey", params_.end[1], archive);
-    LoadFlag("ez", params_.end[2], archive);
-    LoadFlag("fx", params_.force[0], archive);
-    LoadFlag("fy", params_.force[1], archive);
-    LoadFlag("fz", params_.force[2], archive);
+    LoadFlag("init_file", params_.init_file, archive);
+    if (params_.init_file == "") {
+      LOG(INFO) << "No init file, using command line parameters";
+      LoadFlag("fluid", config_.fluid, archive);
+      LoadFlag("boundary", config_.boundary, archive);
+      LoadFlag("gravity", config_.gravity, archive);
+      LoadFlag("fx", config_.force[0], archive);
+      LoadFlag("fy", config_.force[1], archive);
+      LoadFlag("fz", config_.force[2], archive);
+    } else {
+      LOG(INFO) << "Parsing init file";
+      ParseSimulationConfiguration(params_.init_file);
+    }
 
     LoadFlag("solver_iterations", params_.solver_max_iterations, archive);
 
@@ -89,10 +96,9 @@ FlipApp::FlipApp() {
   params_.partitions = common::Coord(1);
   params_.main_partitions = common::Coord(1);
   params_.global_dims = common::Coord(64);
-  params_.start = common::Vec3<T>(0);
-  params_.end = common::Vec3<T>(1);
-  params_.force = common::Vec3<T>(0,1,0);
-  profile_params_.affinity = common::Coord(4);
+  params_.init_file = "";  // by default, init from file is empty
+  profile_params_.affinity = common::Coord(1);
+  config_.force = common::Vec3<T>(0,1,0);
   coarse_partitions_ = common::Coord(1);
   coarse_sim_ = nullptr;
   main_sim_ = nullptr;
@@ -116,32 +122,143 @@ void FlipApp::SetMigratableVariables() {
   }
 }  // SetMigratableVariables
 
+namespace {
+
+std::vector<std::string> GetTokens(
+    const std::string &line, const std::string &delimiters) {
+  std::vector<std::string> tokens;
+  if (line == "") {
+    return tokens;
+  }  // line == ""
+
+  char *line_c = new char [line.length() + 1];
+  std::strcpy(line_c, line.c_str());
+
+  const char *delimiters_c = delimiters.c_str();
+
+  char *tok = strtok(line_c, delimiters_c);
+  while (tok != NULL) {
+    tokens.emplace_back(tok);
+    tok = strtok(NULL, delimiters_c);
+  }  // while tok != NULL
+
+  delete[] line_c;
+
+  return tokens;
+}  // GetTokens
+
+}  // namespace anonymous
+
+/*
+ * Parse simulation configuration from a file:
+ * parse sources, soilds, additional fluids, and forces.
+ * Pass normalized velocity, forces and dimensions here.
+ * The final intiialization multiplies gravity and dimensions by global
+ * dimensions, and velocity and forces by the scaled gravity.
+ */
+void FlipApp::ParseSimulationConfiguration(const std::string init_file) {
+  CHECK(init_file != "") << "Expected non-empty file name";
+  CHECK(boost::filesystem::exists(init_file) &&
+        !boost::filesystem::is_directory(init_file))
+      << "Invalid file name";
+  std::ifstream file(init_file.c_str());
+  std::string line;
+  std::string delimiters = ", :";
+  while (std::getline(file, line)) {
+    const std::vector<std::string> tokens = GetTokens(line, delimiters);
+    const std::string key = tokens[0];
+    if (key == "fluid") {
+      config_.fluid = common::Parse<int>(tokens[1]);
+      LOG(INFO) << "Got fluid " << config_.fluid;
+    }  // key == "fluid"
+    else if (key == "boundary") {
+      config_.boundary = common::Parse<int>(tokens[1]);
+      LOG(INFO) << "Got boundary " << config_.boundary;
+    }  // key == "boundary"
+    else if (key == "gravity") {
+      config_.gravity = common::Parse<T>(tokens[1]);
+      LOG(INFO) << "Got gravity " << config_.gravity;
+    }  // key == "gravity"
+    else if (key == "force") {
+      common::ParseVec3<T>(tokens, 1, &config_.force);
+      LOG(INFO) << "Force " << common::ToString(config_.force);
+    }  // key == "gravity"
+    else if (key == "fluid-cube") {
+      Fluid fluid;
+      fluid.shape.reset(new common::Cube<T>());
+      int id = fluid.shape->ParseFrom(tokens, 1);
+      id = common::ParseVec3<T>(tokens, id, &fluid.velocity);
+      LOG(INFO) << "Adding fluid cube " << fluid.shape->ToString()
+                << ", initial velocity " << common::ToString(fluid.velocity);
+      config_.additional_fluids.push_back(fluid);
+    }  // key == fluid cube
+    else if (key == "fluid-sphere") {
+      Fluid fluid;
+      fluid.shape.reset(new common::Sphere<T>());
+      int id = fluid.shape->ParseFrom(tokens, 1);
+      id = common::ParseVec3<T>(tokens, id, &fluid.velocity);
+      LOG(INFO) << "Adding fluid sphere " << fluid.shape->ToString()
+                << ", initial velocity " << common::ToString(fluid.velocity);
+      config_.additional_fluids.push_back(fluid);
+    }  // key == fluid sphere
+    else if (key == "source-static") {
+      common::Cube<T> box;
+      int id = box.ParseFrom(tokens, 1);
+      common::Vec3<T> velocity;
+      id = common::ParseVec3<T>(tokens, id, &velocity);
+      LOG(INFO) << "Adding static source cube " << box.ToString()
+                << " and velocity " << common::ToString(velocity);
+      config_.sources.emplace_back(box, velocity);
+    }  // key == source-static
+    else if (key == "source-timed") {
+      common::Cube<T> box;
+      int id = box.ParseFrom(tokens, 1);
+      common::Vec3<T> velocity;
+      id = common::ParseVec3<T>(tokens, id, &velocity);
+      T start_time = common::Parse<T>(tokens[id]);
+      T end_time = common::Parse<T>(tokens[++id]);
+      LOG(INFO) << "Adding timed source cube " << box.ToString()
+                << " and velocity " << common::ToString(velocity)
+                << " active period " << start_time << " to " << end_time;
+      config_.sources.emplace_back(box, velocity);
+      config_.sources.back().set_timed(start_time, end_time);
+    }  // key == source-static
+    else if (key == "source-oscillating") {
+      common::Cube<T> box1, box2;
+      int id = box1.ParseFrom(tokens, 1);
+      id = box2.ParseFrom(tokens, id);
+      T box_period = common::Parse<T>(tokens[id++]);
+      common::Vec3<T> velocity1, velocity2;
+      id = common::ParseVec3<T>(tokens, id, &velocity1);
+      id = common::ParseVec3<T>(tokens, id, &velocity2);
+      T velocity_period = common::Parse<T>(tokens[id++]);
+      LOG(INFO) << "Adding oscillating source cube " << box1.ToString()
+                << " to " << box2.ToString()
+                << " and velocity " << common::ToString(velocity1)
+                << " to " << common::ToString(velocity2);
+      config_.sources.emplace_back();
+      config_.sources.back().set_box(box1, box2, box_period);
+      config_.sources.back().set_velocity(velocity1, velocity2, velocity_period);
+    }  // key == source-oscillating
+    else if (key == "solid") {
+      Solid solid;
+      solid.shape.reset(new common::Cube<T>());
+      solid.shape->ParseFrom(tokens, 1);
+      LOG(INFO) << "Adding solid cube " << solid.shape->ToString();
+      config_.solids.push_back(solid);
+    }  // key == solid
+  }  // while getline
+}  // ParseSimulationConfiguration
+
 /*
  * Simulation driver constructor.
  */
 FlipDriver::FlipDriver(
-  FlipApp *flip_app,
-  const SimulationParameters &params,
-  const ProfileParameters &profile_params,
-  std::string name_str) : app_(flip_app), global_profile_(false),
-    params_(params), profile_params_(profile_params), name_(name_str) {
-  advanced_time_ = nullptr;
-  global_advanced_time_ = nullptr;
-  local_dt_ = nullptr;
-  global_dt_ = nullptr;
-  step_ = nullptr;
-  simulation_ = nullptr;
-  grid_velocity_ = nullptr;
-  grid_velocity_update_ = nullptr;
-  grid_weight_ = nullptr;
-  grid_phi_ = nullptr;
-  grid_divergence_ = nullptr;
-  grid_pressure_ = nullptr;
-  grid_marker_ = nullptr;
-  grid_source_ = nullptr;
-  particles_ = nullptr;
-  local_distribution_ = nullptr;
-  global_distribution_ = nullptr;
+    FlipApp *flip_app, const SimulationParameters &params,
+    const ProfileParameters &profile_params,
+    const SimulationConfiguration &config, std::string name_str)
+  : app_(flip_app), global_profile_(false), params_(params),
+    profile_params_(profile_params), config_(config), name_(name_str) {
 }  // FlipDriver
 
 /*
@@ -174,8 +291,8 @@ FlipDriver::~FlipDriver() {
     delete grid_pressure_;
   if (grid_marker_)
     delete grid_marker_;
-  if (grid_source_)
-    delete grid_source_;
+  if (grid_solid_)
+    delete grid_solid_;
   if (particles_)
     delete particles_;
 }  // ~FlipDriver
@@ -241,8 +358,8 @@ void FlipDriver::DeclareVariables() {
     app_->DeclareVariable<ScalarGridT>(num_partitions));
   grid_marker_ = new VariableHandle<ScalarGridInt>(
     app_->DeclareVariable<ScalarGridInt>(num_partitions));
-  grid_source_ = new VariableHandle<ScalarGridBool>(
-    app_->DeclareVariable<ScalarGridBool>(num_partitions));
+  grid_solid_ = new VariableHandle<ScalarGridInt>(
+    app_->DeclareVariable<ScalarGridInt>(num_partitions));
   particles_ = new VariableHandle<ParticlesT>(
     app_->DeclareVariable<ParticlesT>(num_partitions));
 
@@ -294,7 +411,7 @@ void FlipDriver::AssignWorkersForPartitions(const std::vector<int> &idxs) {
   success &= grid_pressure_->RecordInitialPartitionPlacement(app_, idxs);
   assert(success);
   success &= grid_marker_->RecordInitialPartitionPlacement(app_, idxs);
-  success &= grid_source_->RecordInitialPartitionPlacement(app_, idxs);
+  success &= grid_solid_->RecordInitialPartitionPlacement(app_, idxs);
   assert(success);
   success &= particles_->RecordInitialPartitionPlacement(app_, idxs);
 	success &= local_distribution_->RecordInitialPartitionPlacement(app_, idxs);
@@ -316,7 +433,7 @@ void FlipDriver::SetMigratableVariables() {
   grid_divergence_->SetUpdatePlacement(app_, true);
   grid_pressure_->SetUpdatePlacement(app_, true);
   grid_marker_->SetUpdatePlacement(app_, true);
-  grid_source_->SetUpdatePlacement(app_, true);
+  grid_solid_->SetUpdatePlacement(app_, true);
   particles_->SetUpdatePlacement(app_, true);
   local_distribution_->SetUpdatePlacement(app_, true);
   solver_->SetMigratableVariables();
@@ -451,8 +568,8 @@ void FlipDriver::GetReadWriteAccess(
       app_->ReadAccess(*grid_pressure_);
     else if (variable == grid_marker_str_)
       app_->ReadAccess(*grid_marker_);
-    else if (variable == grid_source_str_)
-      app_->ReadAccess(*grid_source_);
+    else if (variable == grid_solid_str_)
+      app_->ReadAccess(*grid_solid_);
     else if (variable == particles_str_)
       app_->ReadAccess(*particles_);
     else if (variable == local_distribution_str_)
@@ -475,8 +592,8 @@ void FlipDriver::GetReadWriteAccess(
       app_->WriteAccess(*grid_pressure_);
     else if (variable == grid_marker_str_)
       app_->WriteAccess(*grid_marker_);
-    else if (variable == grid_source_str_)
-      app_->WriteAccess(*grid_source_);
+    else if (variable == grid_solid_str_)
+      app_->WriteAccess(*grid_solid_);
     else if (variable == particles_str_)
       app_->WriteAccess(*particles_);
     else if (variable == local_distribution_str_)
@@ -529,10 +646,10 @@ FlipDriver::FlipSimulationT *FlipDriver::SetVariables(
       ScalarGridInt &grid_marker =
         const_cast<ScalarGridInt&>(task_context->ReadVariable(*grid_marker_));
       simulation->set_grid_marker(&grid_marker);
-    } else if (variable == grid_source_str_) {
-      ScalarGridBool &grid_source =
-        const_cast<ScalarGridBool&>(task_context->ReadVariable(*grid_source_));
-      simulation->set_grid_source(&grid_source);
+    } else if (variable == grid_solid_str_) {
+      ScalarGridInt &grid_solid =
+        const_cast<ScalarGridInt&>(task_context->ReadVariable(*grid_solid_));
+      simulation->set_grid_solid(&grid_solid);
     } else if (variable == particles_str_) {
       ParticlesT &particles =
         const_cast<ParticlesT&>(task_context->ReadVariable(*particles_));
@@ -572,10 +689,10 @@ FlipDriver::FlipSimulationT *FlipDriver::SetVariables(
       ScalarGridInt *grid_marker =
         task_context->WriteVariable(*grid_marker_);
       simulation->set_grid_marker(grid_marker);
-    } else if (variable == grid_source_str_) {
-      ScalarGridBool *grid_source =
-        task_context->WriteVariable(*grid_source_);
-      simulation->set_grid_source(grid_source);
+    } else if (variable == grid_solid_str_) {
+      ScalarGridInt *grid_solid =
+        task_context->WriteVariable(*grid_solid_);
+      simulation->set_grid_solid(grid_solid);
     } else if (variable == particles_str_) {
       ParticlesT *particles =
         task_context->WriteVariable(*particles_);
@@ -600,7 +717,7 @@ void FlipDriver::ResetVariables(FlipSimulationT *simulation) {
   simulation->set_grid_divergence(nullptr);
   simulation->set_grid_pressure(nullptr);
   simulation->set_grid_marker(nullptr);
-  simulation->set_grid_source(nullptr);
+  simulation->set_grid_solid(nullptr);
   simulation->set_particles(nullptr);
   simulation->set_profile(nullptr);
 }  // ResetVariables
@@ -616,7 +733,7 @@ const std::string FlipDriver::grid_phi_str_ = "grid_phi";
 const std::string FlipDriver::grid_divergence_str_ = "grid_divergence";
 const std::string FlipDriver::grid_pressure_str_ = "grid_pressure";
 const std::string FlipDriver::grid_marker_str_ = "grid_marker";
-const std::string FlipDriver::grid_source_str_ = "grid_source";
+const std::string FlipDriver::grid_solid_str_ = "grid_solid";
 const std::string FlipDriver::particles_str_ = "particles";
 const std::string FlipDriver::local_distribution_str_ = "local_distribution";
 

@@ -30,6 +30,19 @@
 *.exe
 *.out
 *.app
+*.pyc
 
-# Build files/directories
-build
+# OS X
+*.DS_Store
+
+*result*
+*out*
+*output
+
+# C-tags
+tags
+
+# Data directories/files
+input
+output
+*.zip

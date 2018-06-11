@@ -21,7 +21,8 @@ void WaterApp::Program() {
   tbb::task_scheduler_init tbb_init(1);
   openvdb::initialize();
 
-  main_sim_ = new SimulationDriver(this, params_, profile_params_, "Main");
+  main_sim_ = new SimulationDriver(this, params_, profile_params_,
+                                   config_, "Main");
   main_sim_->set_global_profile(true);
   main_sim_->set_migratable(true);
 

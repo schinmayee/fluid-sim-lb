@@ -4,6 +4,7 @@
 #include <openvdb/tools/VelocityFields.h>
 
 #include "common/particles.h"
+#include "common/scalar_grid.h"
 #include "common/vector_grid.h"
 
 namespace common {
@@ -171,17 +172,103 @@ void Particles<N1, N2, T>::Write(std::string file_name, bool text) const {
 	}
   Coord start = metagrid_.start();
   Coord end = metagrid_.end();
-	fprintf(fp, "%d %d %d\n", start[0], start[1], start[2]);
-	fprintf(fp, "%d %d %d\n", end[0], end[1], end[2]);
-	fprintf(fp, "%d\n", size_);
-  // Bind arguments and call WriteParticle for each particle.
-  std::function<void(const ParticleData&, const Coord, int)> write_op =
-    std::bind(WriteParticle, std::ref(fp),
-              std::placeholders::_1, std::placeholders::_2,
-              std::placeholders::_3);
-  ForEachConst(write_op);
+  if (text) {
+	  fprintf(fp, "%d %d %d\n", start[0], start[1], start[2]);
+	  fprintf(fp, "%d %d %d\n", end[0], end[1], end[2]);
+	  fprintf(fp, "%d\n", size_);
+    // Bind arguments and call WriteParticle for each particle.
+    std::function<void(const ParticleData&, const Coord, int)> write_op =
+      std::bind(WriteParticle, std::ref(fp),
+                std::placeholders::_1, std::placeholders::_2,
+                std::placeholders::_3);
+    ForEachConst(write_op);
+  } else {
+    int start_int[3] = {start[0], start[1], start[2]};
+    int end_int[3] = {end[0], end[1], end[2]};
+    int size_int = size_;
+    fwrite(start_int, sizeof(int), 3, fp);
+    fwrite(end_int, sizeof(int), 3, fp);
+    fwrite(&size_int, sizeof(int), 1, fp);
+    // Bind arguments and call WriteParticle for each particle.
+    std::function<void(const ParticleData&, const Coord, int)> write_op =
+      std::bind(WriteParticleBinary, std::ref(fp),
+                std::placeholders::_1, std::placeholders::_2,
+                std::placeholders::_3);
+    ForEachConst(write_op);
+  }
 	fclose(fp);
 }  // Write
+
+template<Index N1, Index N2, typename T>
+void Particles<N1, N2, T>::DeleteParticlesInSolids(const ScalarGridInt &solid) {
+  const typename ScalarGridInt::GridT::Ptr solid_data = solid.const_data();
+  for (typename ScalarGridInt::GridT::ValueOnCIter iter =
+       solid_data->cbeginValueOn(); iter.test(); ++iter) {
+    Coord c = iter.getCoord();
+    if (data_accessor_.isValueOn(c)) {
+      Address addr = data_accessor_.getValue(c);
+      if (addr == 0) {
+        continue;
+      }
+      ParticleList *list = reinterpret_cast<ParticleList*>(addr);
+      delete list;
+      data_accessor_.setValueOff(c, 0);
+    }
+  }
+  data_->pruneGrid();
+}  // DeleteParticlesInSolids
+
+template<Index N1, Index N2, typename T>
+void Particles<N1, N2, T>::DeleteParticlesFromRegions(
+    const std::vector< common::Cube<T> > &regions) {
+  for (auto region : regions) {
+    const Vec3<T> start = region.get_start();
+    const Vec3<T> end = region.get_end();
+    const Coord sc(start[0]-1, start[1]-1, start[2]-1);
+    const Coord ec(end[0]+1, end[1]+1, end[2]+1);
+    for (int i = sc[0]; i <= ec[0]; ++i) {
+      for (int j = sc[1]; j <= ec[1]; ++j) {
+        for (int k = sc[2]; k <= ec[2]; ++k) {
+          Coord c(i,j,k);
+          ParticleList *list = nullptr;
+
+          if (data_accessor_.isValueOn(c)) {
+            Address addr = data_accessor_.getValue(c);
+            list = reinterpret_cast<ParticleList*>(addr);
+          }  // if is on
+
+          if (list == nullptr) {
+            continue;
+          }
+
+          const Vec3<T> cell_start(i, j, k);
+          const Vec3<T> cell_end(i+1, j+1, k+1);
+
+          if (region.IsInside(cell_start) && region.IsInside(cell_end)) {
+            // Fast case, cell is in interior
+            delete list;
+            data_accessor_.setValueOff(c, 0);
+          } else {
+            // Slow case, go through each particle
+            for (typename ParticleList::ParticleListIterator bucket =
+                 list->begin(); bucket != list->end(); ++bucket) {
+              for (int id = 0; id < bucket->size(); ++id) {
+                if (bucket->is_removed(id)) {
+                  continue;
+                }
+                ParticleData &p = bucket->particle(id);
+                if (region.IsInside(p.position)) {
+                  list->MarkRemoved(bucket, id);
+                }  // IsInside
+              }  // go over each particle in each bucket
+            }  // go over each bucket
+          }  // if inside else
+
+        }  // for k
+      }  // for j
+    }  // for i
+  }  // for region
+}  // DeleteParticlesFromRegions
 
 template<Index N1, Index N2, typename T>
 void Particles<N1, N2, T>::DeleteOutsideParticles() {
@@ -202,7 +289,7 @@ void Particles<N1, N2, T>::DeleteOutsideParticles() {
       iter.setValueOff();
     }
   }  // for iter
-  data_->pruneGrid();
+  // data_->pruneGrid();  // don't need to defragment
 }  // DeleteOutsideParticles
 
 template<Index N1, Index N2, typename T>
@@ -390,23 +477,10 @@ void Particles<N1, N2, T>::DeserializeHelper(
 
 template<Index N1, Index N2, typename T>
 template<typename VectorGridT, bool staggered, int temporal, int spatial>
-void Particles<N1, N2, T>::StepInGrid(VectorGridT &v, T dt) {
+void Particles<N1, N2, T>::StepInGrid(const VectorGridT &v, T dt) {
 	if (staggered) {
 		assert(v.isStaggered());
 	}
-	// VelocityIntegrator to handle integration
-	//typedef typename openvdb::tools::VelocityIntegrator<typename VectorGridT::GridT, staggered, spatial> VelocityIntegratorT;
-  //VelocityIntegratorT integrator(*(v.data()));
-  // Bind arguments and call StepParticleInGrid for each particle.
-  //std::function<void(ParticleData&, const Coord, int)> step_op =
-  //  std::bind(StepParticleInGrid<VelocityIntegratorT, temporal>,
-  //            std::ref(integrator), dt,
-  //            std::placeholders::_1, std::placeholders::_2,
-  //            std::placeholders::_3);
-  //ForEach(step_op);
-
-  // Updateparticle cells and do defragmentation all in one step.
-
   // Update positions and insert particles into buffer, and clear particles.
   const Coord dims = metagrid_.global_dims();
   int num_particles = size();
@@ -422,10 +496,9 @@ void Particles<N1, N2, T>::StepInGrid(VectorGridT &v, T dt) {
     for (typename ParticleList::ParticleListIterator bucket = list->begin();
          bucket != list->end(); ++bucket) {
       for (int i = 0; i < bucket->size(); ++i) {
-        assert(!bucket->is_removed(i));
-        //if (bucket->is_removed(i)) {
-        //  continue;
-        //}
+        if (bucket->is_removed(i)) {
+          continue;
+        }
         CHECK(p < num_particles);
         buffer[p] = bucket->particle(i);
         buffer[p].position += buffer[p].grid_velocity * dt;
@@ -436,19 +509,13 @@ void Particles<N1, N2, T>::StepInGrid(VectorGridT &v, T dt) {
   }  // iter over active voxels containing particles
   data_->clear();
 
-  // Now copy particles over, copy only those particles that are still within the grid.
+  // Copy over all particles.
   for (int i = 0; i < num_particles; ++i) {
     ParticleData &pd = buffer[i];
     Coord id(0);
     for (int d = 0; d < 3; ++d) {
-      //id[d] = floor(pd.position[d]/voxel_len_);
       id[d] = floor(pd.position[d]);
     }  // for d
-    if (id[0] < -1 || id[0] > dims[0]+1 ||
-        id[1] < -1 || id[1] > dims[1]+1 ||
-        id[2] < -1 || id[2] > dims[2]+1) {
-      continue;
-    }
     if (id[0] < 0) {
       id[0] = 0;
       pd.position[0] = 0;
@@ -482,7 +549,6 @@ template<Index N1, Index N2, typename T>
 void Particles<N1, N2, T>::UpdateParticleCells() {
   ClearBuffer();
   int moved = 0;
-  // VLOG(1) << "Original number of particles = " << size();
   for (typename GridT::ValueOnIter iter = data_->beginValueOn();
        iter.test(); ++iter) {
     Address addr = iter.getValue();
@@ -499,7 +565,6 @@ void Particles<N1, N2, T>::UpdateParticleCells() {
         ParticleData &pd = bucket->particle(i);
         Coord id(0);
         for (int d = 0; d < 3; ++d) {
-          //id[d] = floor(pd.position[d]/voxel_len_);
           id[d] = floor(pd.position[d]);
         }  // for d
         if (id != iter.getCoord()) {
@@ -511,11 +576,8 @@ void Particles<N1, N2, T>::UpdateParticleCells() {
       }  // for i, for each particle in bucket
     }  // for bucket
   }  // iter over active voxels containing particles
-  // VLOG(1) << "Number of particles to be moved = " << moved;
   int old_size = size_;
-  // VLOG(1) << "Number of particles before merging = " << size();
   MergeBufferIntoData();
-  // VLOG(1) << "Number of particles after merging = " << size();
   assert(old_size + moved == size_);
 }  // UpdateParticleCells
 
@@ -526,17 +588,17 @@ template void Particles<3, 3, float>::SerializeDense<false>(const CoordBBox box,
 template void Particles<3, 3, float>::DeserializeHelper<true>(canary::CanaryInputArchive&);
 template void Particles<3, 3, float>::DeserializeHelper<false>(canary::CanaryInputArchive&);
 
-template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, true, 1, 1 >(VectorGrid<3,3,float>&, float);
-template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, true, 2, 1 >(VectorGrid<3,3,float>&, float);
-template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, true, 2, 2 >(VectorGrid<3,3,float>&, float);
-template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, false, 1, 1 >(VectorGrid<3,3,float>&, float);
-template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, false, 2, 1 >(VectorGrid<3,3,float>&, float);
-template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, false, 2, 2 >(VectorGrid<3,3,float>&, float);
-template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, true, 1, 1 >(VectorGrid<3,3,double>&, double);
-template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, true, 2, 1 >(VectorGrid<3,3,double>&, double);
-template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, true, 2, 2 >(VectorGrid<3,3,double>&, double);
-template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, false, 1, 1 >(VectorGrid<3,3,double>&, double);
-template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, false, 2, 1 >(VectorGrid<3,3,double>&, double);
-template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, false, 2, 2 >(VectorGrid<3,3,double>&, double);
+template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, true, 1, 1 >(const VectorGrid<3,3,float>&, float);
+template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, true, 2, 1 >(const VectorGrid<3,3,float>&, float);
+template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, true, 2, 2 >(const VectorGrid<3,3,float>&, float);
+template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, false, 1, 1 >(const VectorGrid<3,3,float>&, float);
+template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, false, 2, 1 >(const VectorGrid<3,3,float>&, float);
+template void Particles<3, 3, float>::StepInGrid< VectorGrid<3,3,float>, false, 2, 2 >(const VectorGrid<3,3,float>&, float);
+template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, true, 1, 1 >(const VectorGrid<3,3,double>&, double);
+template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, true, 2, 1 >(const VectorGrid<3,3,double>&, double);
+template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, true, 2, 2 >(const VectorGrid<3,3,double>&, double);
+template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, false, 1, 1 >(const VectorGrid<3,3,double>&, double);
+template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, false, 2, 1 >(const VectorGrid<3,3,double>&, double);
+template void Particles<3, 3, double>::StepInGrid< VectorGrid<3,3,double>, false, 2, 2 >(const VectorGrid<3,3,double>&, double);
 
 }  // namespace common

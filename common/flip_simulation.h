@@ -12,7 +12,9 @@
 #include "common/distribution.h"
 #include "common/metagrid.h"
 #include "common/particles.h"
+#include "common/primitives.h"
 #include "common/scalar_grid.h"
+#include "common/sources.h"
 #include "common/vector_grid.h"
 
 namespace application {
@@ -46,21 +48,16 @@ class FlipSimulation {
     // Initialize profiling data.
     void InitializeProfiling(common::Coord main_partitions);
 
-		// These simulation methods are to be used for doing a flip simulation.
-
-    // Initialize water drop, with existing reservoir of given height, and
-    // a sphere at given center and radius.
-    void InitializeWaterDrop(T height, common::Vec3<T> center, T radius);
-
     // Serialization and deserialization methods using archive.
     template<class Archive> void save(Archive &ar) const {
       ar(common::kMagicNumber);
       assert(profile_ == nullptr);
       ar(metagrid_);
       ar(voxel_len_, num_particles_per_cell_, gravity_);
-      ar(fx_, fy_, fz_, config_);
+      ar(fx_, fy_, fz_);
       ar(flip_factor_, frame_, debug_, debug_step_);
       ar(phi_max_);
+      ar(sources_);
       ar(output_dir_, debug_output_dir_);
       ar(common::kMagicNumber);
     }  // save
@@ -71,9 +68,10 @@ class FlipSimulation {
       CHECK_EQ(magic_number, common::kMagicNumber);
       ar(metagrid_);
       ar(voxel_len_, num_particles_per_cell_, gravity_);
-      ar(fx_, fy_, fz_, config_);
+      ar(fx_, fy_, fz_);
       ar(flip_factor_, frame_, debug_, debug_step_);
       ar(phi_max_);
+      ar(sources_);
       ar(output_dir_, debug_output_dir_);
       magic_number = 0;
       ar(magic_number);
@@ -84,11 +82,7 @@ class FlipSimulation {
       SetUpOutputAndLoggingFiles();
     }  // load
 
-    // Initialize one way dam break.
-    void InitializeOneWayDamBreak(T lx, T ly, T lz);
-
-    // Initialize disturbance.
-    void InitializeDisturbance(T height);
+		// These simulation methods are to be used for doing a flip simulation.
 
     // Initialize reservoir.
     void InitializeReservoir(T height);
@@ -98,11 +92,27 @@ class FlipSimulation {
       T height, const std::vector<common::Vec3<T>> &centers,
       const std::vector<T> &radii);
 
-    // Initialize sloshing tank.
-    void InitializeSloshingTank(T mx, T ax, T my, T ay, T mz, T az, T fx, T fy, T fz);
+    // Initialize water cuboid.
+    void InitializeWaterCuboid(const common::Cube<T> &box,
+                               const common::Vec3<T> velocity);
+    void InitializeWaterSphere(const common::Vec3<T> &center, const T radius,
+                               const common::Vec3<T> velocity);
 
-    // Add waterfall source.
-    void AddWaterFallSource(T height, T thickness);
+    // Set forces -- default is gravity*1 in -y.
+    void SetForces(const common::Vec3<T> &f);
+
+    // Set solid walls for all domain boundary -- like a closed box.
+    void SetBoxBoundary();
+
+    // Set solid walls for all domain boundary except the top --
+    // like an open tank.
+    void SetTankBoundary();
+
+    // Add solid shaped like a cuboid -- only stationary solids supported.
+    void AddSolidCuboid(const common::CoordBBox &box);
+
+    // Add water source.
+    void AddWaterSource(const Source<T> &source);
 
     // Clear grid data.
     void ClearGridData();
@@ -128,7 +138,7 @@ class FlipSimulation {
     // Move particles in grid velocity.
     void MoveParticles(T dt, bool defragment);
 		// Update grid velocity by adding gravity.
-		void AddGravity(T dt, bool additional);
+		void AddGravity(T dt);
 		// Advect phi.
 		void AdvectPhi();
 
@@ -158,10 +168,17 @@ class FlipSimulation {
 		void UpdateParticlesFromGrid();
     // Resample particles.
     void ResampleParticles();
+    // Delete particles inside solids.
+    void DeleteParticlesInSolids();
     // Delete outside particles.
     void DeleteOutsideParticles();
     // Add contribution from sources.
-    void SetContributionFromSources();
+    void AddContributionFromSources(T t);
+    // Delete particles inside sources and mark those regions as solids
+    // for rest of the simulation.
+    // NOTE: If fluid from elsewhere starts overlapping with sources, then need
+    // to do something better.
+    void DeleteFluidInSources(T t);
 
 		// Write data to file.
 		void SaveDataToFile();
@@ -177,15 +194,12 @@ class FlipSimulation {
     int num_particles_per_cell_;  // average number of particles per cell
 		T gravity_;  // value for gravity
     T fx_ = 0;
-    T fy_ = 0;
+    T fy_ = 1;
     T fz_ = 0;
     T flip_factor_;  // flip factor for combining grid velocity and update
 		std::string output_dir_;  // output directory
 		std::string debug_output_dir_;  // output directory for debug output
 		bool debug_;  // debug mode
-    int config_ = 0;
-    int disturbance_num_ = 4;
-    int applied_disturbance_ = 0;
 
 		// Prefix filenames for saved data with these.
 		std::string grid_velocity_prefix_;
@@ -198,6 +212,8 @@ class FlipSimulation {
 
     // Maximum phi to compute.
     T phi_max_;
+    // List of water sources.
+    std::vector< Source<T> > sources_;
 
 		// These hold particle and grid data for the simulation.
 		VectorGridT *grid_velocity_; 
@@ -207,14 +223,11 @@ class FlipSimulation {
 		ScalarGridT *grid_divergence_;
 		ScalarGridT *grid_pressure_;
 		ScalarGridInt *grid_marker_;
-		ScalarGridBool *grid_source_;
+    ScalarGridInt *grid_solid_;
 		ParticlesT *particles_;
 
     // Fluid distribution, store profiled information.
     common::ProfileSliceLocal *profile_;
-
-    // Sources
-    std::vector< std::function<void(void)> > sources_;
 
 		// Current frame number to simulate/save.
 		int frame_;
@@ -236,7 +249,8 @@ class FlipSimulation {
         const common::Vec3<T> &position, int dim,
 				common::Coord &c, common::Vec2<T> weights[3]) const;
     // Initialize particles using initialized phi/marker.
-    void InitializePhiAndParticles(std::function<T(const common::Vec3<T>&)>);
+    void InitializePhiAndParticles(std::function<T(const common::Vec3<T>&)>,
+                                   const common::Vec3<T> velocity);
 
     // Compute phi by sweeping.
     void SweepPhiSingle(const int start[3], const int end[3],
@@ -268,8 +282,8 @@ class FlipSimulation {
     void set_grid_marker(ScalarGridInt *grid_marker) {
       grid_marker_ = grid_marker;
     }
-    void set_grid_source(ScalarGridBool *grid_source) {
-      grid_source_ = grid_source;
+    void set_grid_solid(ScalarGridInt *grid_solid) {
+      grid_solid_ = grid_solid;
     }
     void set_particles(ParticlesT *particles) {
       particles_ = particles;
@@ -298,8 +312,8 @@ class FlipSimulation {
     ScalarGridInt* grid_marker() {
       return grid_marker_;
     }
-    ScalarGridBool* grid_source() {
-      return grid_source_;
+    ScalarGridInt* grid_solid() {
+      return grid_solid_;
     }
     ParticlesT* particles() {
       return particles_;

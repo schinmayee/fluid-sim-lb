@@ -10,10 +10,10 @@ diff -ruN openvdb-4.0.1-original/openvdb/Makefile openvdb-4.0.1/openvdb/Makefile
  
  # The parent directory of the boost/ header directory
 -BOOST_INCL_DIR := $(HT)/include
-+BOOST_INCL_DIR := /home/chinmayee/installations/boost
++BOOST_INCL_DIR := $(HOME)/installations/boost
  # The directory containing libboost_iostreams, libboost_system, etc.
 -BOOST_LIB_DIR := $(HDSO)
-+BOOST_LIB_DIR := /home/chinmayee/installations/boost/stage/lib
++BOOST_LIB_DIR := $(HOME)/installations/boost/stage/lib
  BOOST_LIB := -lboost_iostreams -lboost_system
  BOOST_THREAD_LIB := -lboost_thread
  

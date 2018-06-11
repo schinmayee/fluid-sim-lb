@@ -67,6 +67,9 @@ class ScalarGrid {
 		inline bool isOn(Coord c) const {
 			return accessor_.isValueOn(c);
 		}
+    inline void fill(const CoordBBox &box, T value, bool active=true) {
+      accessor_.getTree()->denseFill(box, value, active);
+    }
 		inline typename GridT::Ptr data() { return data_; }
     inline typename GridT::Ptr const_data() const { return data_; }
 
@@ -126,44 +129,15 @@ class ScalarGrid {
     void save(Archive &ar) const {
       ar(metagrid_, background_, voxel_len_, name_);
       CoordBBox bbox = data_->evalActiveVoxelBoundingBox();
+      Coord dims = bbox.dim();
+      Coord local_dims = metagrid_.local_dims();
       SerializeDense(bbox, ar);
-      //bbox.expand(metagrid_.bbox());
-      //const Coord start = bbox.min();
-      //const Coord end = bbox.max();
-      //ar(start[0], start[1], start[2]);
-      //ar(end[0], end[1], end[2]);
-      //for (int i = start[0]; i <= end[0]; ++i) {
-      //  for (int j = start[1]; j <= end[1]; ++j) {
-      //    for (int k = start[2]; k <= end[2]; ++k) {
-      //      Coord c(i, j, k);
-      //      bool mask = isOn(c);
-      //      T v = get(c);
-      //      ar(mask, v);
-      //    }  // for k
-      //  }  // for j
-      //}  // for i
     }
     template <class Archive>
     void load(Archive &ar) {
       ar(metagrid_, background_, voxel_len_, name_);
       InitializePartition(metagrid_, voxel_len_, background_, name_);
       DeserializeHelper(ar);
-      //Coord start, end;
-      //ar(start[0], start[1], start[2]);
-      //ar(end[0], end[1], end[2]);
-      //for (int i = start[0]; i <= end[0]; ++i) {
-      //  for (int j = start[1]; j <= end[1]; ++j) {
-      //    for (int k = start[2]; k <= end[2]; ++k) {
-      //      Coord c(i, j, k);
-      //      bool mask;
-      //      T v;
-      //      ar(mask, v);
-      //      if (mask) {
-      //        set(i, j, k, v);
-      //      }
-      //    }  // for k
-      //  }  // for j
-      //}  // for i
     }
 
   private:

@@ -11,6 +11,7 @@
 #include "canary/canary.h"
 #include "common/metagrid.h"
 #include "common/primitives.h"
+#include "common/scalar_grid.h"
 
 namespace common {
 
@@ -257,6 +258,9 @@ class Particles {
 		typedef typename openvdb::tree::Tree3<Address, N1, N2>::Type TreeT;
 		typedef typename openvdb::Grid<TreeT> GridT;
 
+    // Other grids.
+    typedef ScalarGrid<N1, N2, int> ScalarGridInt;
+
 	private:
 		// Members
     // Stores partition information
@@ -334,6 +338,18 @@ class Particles {
         reinterpret_cast<const ParticleList*>(addr);
       return particles;
     }  // const_particle_list
+    // Get number of particles in this cell currently.
+    int num_particles(int i, int j, int k) const {
+      return num_particles(Coord(i,j,k));
+    }  // num_particles
+    int num_particles(Coord ijk) const {
+      const ParticleList *list = const_particle_list(ijk);
+      if (list == nullptr) {
+        return 0;
+      } else {
+        return list->size();
+      }
+    }  // num_particles
 
     // Clear all particles.
     inline void ClearData() {
@@ -370,7 +386,7 @@ class Particles {
 
 		// IO
 		void Load(std::string file_name);
-		void Write(std::string file_name, bool text=false) const;
+		void Write(std::string file_name, bool text=true) const;
     void WriteCheckpoint() const {
       std::string checkpoint = "/tmp/" + name_ + "_" +
                                std::to_string(metagrid_.rank());
@@ -380,7 +396,7 @@ class Particles {
 		// Integrator steps particles using velocity given by v.
 		template<typename VectorGridT, bool staggered=true,
 			      int temporal=1, int spatial=1>
-		void StepInGrid(VectorGridT &v, T dt);
+		void StepInGrid(const VectorGridT &v, T dt);
 
     // Move particles to the correct cells.
     void UpdateParticleCells();
@@ -390,7 +406,13 @@ class Particles {
       active_bbox_ = data_->evalActiveVoxelBoundingBox();
     }
 
-    // Delete outside particles,
+    // Delete particles in solids.
+    void DeleteParticlesInSolids(const ScalarGridInt &solid);
+
+    // Delte particles from given regions.
+    void DeleteParticlesFromRegions(const std::vector< common::Cube<T> > &regions);
+
+    // Delete outside particles.
     void DeleteOutsideParticles();
 
     // Send and receive data.
@@ -473,6 +495,15 @@ class Particles {
           p.velocity[0], p.velocity[1], p.velocity[2]);
     }  // WriteParticle
 
+    inline static void WriteParticleBinary(FILE *fp, const ParticleData &p,
+                                          const Coord c, int id) {
+      float position[3] = { p.position[0], p.position[1], p.position[2] };
+      float velocity[3] = { p.velocity[0], p.velocity[1], p.velocity[2] };
+      fwrite(&id, sizeof(int), 1, fp);
+      fwrite(position, sizeof(float), 3, fp);
+      fwrite(velocity, sizeof(float), 3, fp);
+    }  // WriteParticle
+
     // Helper serialization/deserialization methods.
     template<bool send_grid_velocity>
     void SerializeDense(
@@ -492,20 +523,6 @@ class Particles {
 
     // Count particles in a region, for serializing.
     int Count(const CoordBBox box) const;
-
-		//// Integrator steps particles using velocity given by v.
-		//template<typename VelocityIntegrator, int temporal>
-		//inline static void StepParticleInGrid(
-    //  // Total number of particles in this list.
-    //  VelocityIntegrator &v, T dt, ParticleData &p, const Coord c, int id) {
-    //  p.position += p.grid_velocity*dt;
-    //  //typedef typename VelocityIntegrator::VecType VecT;
-    //  //v.template rungeKutta<temporal, VecT>(dt, p.position);
-    //  assert(!std::isnan(p.position[0]));
-    //  assert(!std::isnan(p.position[1]));
-    //  assert(!std::isnan(p.position[2]));
-    //}  // StepParticleInGrid
-
 };  // class Particles
 
 }  // namespace common

@@ -16,8 +16,9 @@ class SimulationDriver : public FlipDriver {
 
     SimulationDriver(
       WaterApp *water_app, const SimulationParameters &params,
-      const ProfileParameters &profile_params, std::string name = "Main")
-      : FlipDriver(water_app, params, profile_params, name) {}
+      const ProfileParameters &profile_params,
+      const SimulationConfiguration &config, std::string name = "Main")
+      : FlipDriver(water_app, params, profile_params, config, name) {}
 
     // Simulation loop.
     virtual void RunSimulation(int num_frames);

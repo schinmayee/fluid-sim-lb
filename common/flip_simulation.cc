@@ -12,7 +12,7 @@
 #include "common/primitives.h"
 
 #define THRESH 1e-5
-#define PHI_THRESH_POS 4
+#define PHI_THRESH_POS 0.5
 
 namespace application {
 
@@ -30,7 +30,7 @@ FlipSimulation<N1, N2, T>::FlipSimulation() : metagrid_() {
   grid_phi_ = nullptr;
   grid_divergence_ = nullptr;
   grid_marker_ = nullptr;
-  grid_source_ = nullptr;
+  grid_solid_ = nullptr;
   particles_ = nullptr;
   profile_ = nullptr;
   phi_max_ = 5*voxel_len_;
@@ -102,14 +102,14 @@ void FlipSimulation<N1, N2, T>::InitializeMetadata(
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::InitializeVariables() {
-  assert(grid_velocity_ != nullptr);
-  assert(grid_velocity_update_ != nullptr);
-  assert(grid_weight_ != nullptr);
-  assert(grid_phi_ != nullptr);
-  assert(grid_divergence_ != nullptr);
-  assert(grid_marker_ != nullptr);
-  assert(grid_source_ != nullptr);
-  assert(particles_ != nullptr);
+  CHECK(grid_velocity_ != nullptr);
+  CHECK(grid_velocity_update_ != nullptr);
+  CHECK(grid_weight_ != nullptr);
+  CHECK(grid_phi_ != nullptr);
+  CHECK(grid_divergence_ != nullptr);
+  CHECK(grid_marker_ != nullptr);
+  CHECK(grid_solid_ != nullptr);
+  CHECK(particles_ != nullptr);
   grid_velocity_->InitializePartition(metagrid_);
   grid_velocity_update_->InitializePartition(metagrid_);
   grid_weight_->InitializePartition(metagrid_);
@@ -117,7 +117,7 @@ void FlipSimulation<N1, N2, T>::InitializeVariables() {
   grid_divergence_->InitializePartition(metagrid_);
   grid_pressure_->InitializePartition(metagrid_);
   grid_marker_->InitializePartition(metagrid_);
-  grid_source_->InitializePartition(metagrid_);
+  grid_solid_->InitializePartition(metagrid_);
   particles_->InitializePartition(metagrid_);
 }  // InitializeVariables
 
@@ -137,12 +137,17 @@ void FlipSimulation<N1, N2, T>::InitializeProfiling(common::Coord main_partition
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::InitializePhiAndParticles(
-  std::function<T(const common::Vec3<T>&)> ComputePhi) {
+  std::function<T(const common::Vec3<T>&)> ComputePhi,
+  const common::Vec3<T> velocity) {
   common::Coord start = metagrid_.start();
   common::Coord end = metagrid_.end();
   for (int i = start[0]; i <= end[0]; ++i) {
     for (int j = start[1]; j <= end[1]; ++j) {
       for (int k = start[2]; k <= end[2]; ++k) {
+        if (grid_solid_->get(i,j,k) == 1) {
+          grid_marker_->set(i,j,k, common::SOLID);
+          continue;
+        }
         common::Vec3<T> cell_origin(
           voxel_len_*T(i), voxel_len_*T(j), voxel_len_*T(k));
         common::Vec3<T> cell_center = cell_origin + T(0.5*voxel_len_);
@@ -151,8 +156,15 @@ void FlipSimulation<N1, N2, T>::InitializePhiAndParticles(
           grid_phi_->set(i,j,k, phi);
           if (phi < 0) {
             grid_marker_->set(i,j,k, common::FLUID);
+            if (particles_->num_particles(i, j, k) >= num_particles_per_cell_) {
+              continue;
+            }
+            const int max_attempts = 32;
             int pi = 0;
-            while (pi < num_particles_per_cell_) {
+            int num_attempts = 0;
+            for (int num_attempts = 0;
+                  num_attempts < max_attempts && pi < num_particles_per_cell_;
+                 ++num_attempts) {
               T px = cell_origin.x() + (T(random())/T(RAND_MAX)) * voxel_len_;
               T py = cell_origin.y() + (T(random())/T(RAND_MAX)) * voxel_len_;
               T pz = cell_origin.z() + (T(random())/T(RAND_MAX)) * voxel_len_;
@@ -161,65 +173,28 @@ void FlipSimulation<N1, N2, T>::InitializePhiAndParticles(
                 continue;
               } else {
                 ParticleData pd =
-                  { .position = ppos, .velocity = common::Vec3<T>(0),
-                    .grid_velocity = common::Vec3<T>(0) };
+                  { .position = ppos, .velocity = velocity,
+                    .grid_velocity = velocity };
                 particles_->AddParticleToData(i, j, k, pd);
                 ++pi;
+                ++num_attempts;
               }  // if ... > 0
-            }  // for pi
+            }  // for num_attempts
           } // if phi < 0
-        }  // if phi <>
+        }  // if phi < PHI_THRESH_POS
       }  // for k
     }  // for i
   }  // for j
 }  // InitializePhiAndParticles
 
 template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::InitializeWaterDrop(
-  T height, common::Vec3<T> center, T radius) {
-  VLOG(1) << "Water drop initialization for :";
-  VLOG(1) << metagrid_.string();
-  config_ = 1;
-  std::function<T(const common::Vec3<T>&)> ComputePhi =
-    [height, center, radius](const common::Vec3<T> &position) {
-    T phi_reservoir = position.y() - height;
-    common::Vec3<T> delta = position - center;
-    delta[2] = 0;
-    T phi_sphere = delta.length() - radius;
-    //return phi_sphere;
-    T phi = fmin(phi_reservoir, phi_sphere);
-    return phi;
-  };
-  InitializePhiAndParticles(ComputePhi);
-}  // InitializeWaterDrop
-
-template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::InitializeOneWayDamBreak(T lx, T ly, T lz) {
-  config_ = 2;
-  std::function<T(const common::Vec3<T>&)> ComputePhi =
-    [lx, ly, lz](const common::Vec3<T> &position) {
-      T phi_x = position.x() - lx;
-      T phi_y = position.y() - ly;
-      T phi_z = position.z() - lz;
-      if (phi_x < 0 && phi_y < 0 && phi_z < 0) {
-        return -1;
-      } else  {
-        return 1;
-      }
-    };
-  InitializePhiAndParticles(ComputePhi);
-}  // InitializeOneWayDamBreak
-
-template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::InitializeDisturbance(T height) {
-  config_ = 3;
+void FlipSimulation<N1, N2, T>::InitializeReservoir(T height) {
   std::function<T(const common::Vec3<T>&)> ComputePhi =
     [height](const common::Vec3<T> &position) {
-      T h = position.y() - height;
-      return h;
-    };
-  InitializePhiAndParticles(ComputePhi);
-}  // InitializeDisturbance
+       return(position.y() - height);
+     };  // ComputePhi
+  InitializePhiAndParticles(ComputePhi, common::Vec3<T>(0));
+}  // InitializeReservoir
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::InitializeMultipleWaterDrops(
@@ -227,7 +202,6 @@ void FlipSimulation<N1, N2, T>::InitializeMultipleWaterDrops(
   const std::vector<common::Vec3<T>> &centers,
   const std::vector<T> &radii) {
   VLOG(1) << "Multiple drop initialization for";
-  config_ = 4;
   VLOG(1) << metagrid_.string();
   CHECK(centers.size() == radii.size());
   std::function<T(const common::Vec3<T>&)> ComputePhi =
@@ -241,82 +215,170 @@ void FlipSimulation<N1, N2, T>::InitializeMultipleWaterDrops(
     }
     return phi;
   };
-  InitializePhiAndParticles(ComputePhi);
+  InitializePhiAndParticles(ComputePhi, common::Vec3<T>(0));
 }  // InitializeMultipleDrops
 
 template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::InitializeSloshingTank(
-  T mx, T ax, T my, T ay, T mz, T az, T fx, T fy, T fz) {
-  config_ = 5;
-  fx_ = fx; fy_ = fy; fz_ = fz;
+void FlipSimulation<N1, N2, T>::InitializeWaterCuboid(
+    const common::Cube<T> &box, const common::Vec3<T> velocity) {
   std::function<T(const common::Vec3<T>&)> ComputePhi =
-    [mx, ax, my, ay, mz, az](const common::Vec3<T> &position) {
-      if (position.x() > mx && position.x() < ax &&
-          position.y() > my && position.y() < ay &&
-          position.z() > mz && position.z() < az) {
+    [box](const common::Vec3<T> &position) {
+      if (box.IsInside(position)) {
         return -1;
       } else {
         return 1;
       }
     };
-  InitializePhiAndParticles(ComputePhi);
-}  // InitializeSloshingTank
+  InitializePhiAndParticles(ComputePhi, velocity);
+}  // InitializeWaterCuboid
 
 template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::InitializeReservoir(T height) {
+void FlipSimulation<N1, N2, T>::InitializeWaterSphere(
+    const common::Vec3<T> &center, const T radius,
+    const common::Vec3<T> velocity) {
   std::function<T(const common::Vec3<T>&)> ComputePhi =
-    [height](const common::Vec3<T> &position) {
-       return(position.y() - height);
-     };  // ComputePhi
-  InitializePhiAndParticles(ComputePhi);
-}  // InitializeReservoir
+      [center, radius](const common::Vec3<T> &position) {
+    common::Vec3<T> delta = position - center;
+    T phi = delta.length() - radius;
+    return phi;
+  };
+  InitializePhiAndParticles(ComputePhi, velocity);
+}  // InitializeWaterSphere
 
 template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::AddWaterFallSource(T height, T thickness) {
-/*
-  common::Particles<T> &particles = particles_;
-  common::ScalarGrid<N1, N2, T> &grid_phi = grid_phi_;
-  common::ScalarGrid<N1, N2, int> &grid_marker = grid_marker_;
-  common::ScalarGrid<N1, N2, bool> &grid_source = grid_source_;
-  int dim_z = global_dims_[2];
-  T voxel_len = voxel_len_;
-  int num_particles_per_cell = num_particles_per_cell_;
-  std::function<void(void)> WaterFall =
-    [&particles, &grid_phi, &grid_marker, &grid_source,
-     voxel_len, num_particles_per_cell,
-     dim_z, height, thickness]() {
-        int hl = round(height/voxel_len);
-        int hm = round((height+thickness)/voxel_len);
-        const int i = 0;
-        for (int j = hl; j <= hm; ++j) {
-          for (int k = 0; k < dim_z; ++k) {
-            grid_phi.set(i,j,k, -voxel_len/T(2));
-            grid_marker.set(i,j,k, common::FLUID);
-            grid_source.set(i,j,k, true);
-            //VLOG(1) << j << "," << k;
-            int pi = 0;
-            while (pi < num_particles_per_cell) {
-              T px = T(i) * voxel_len + (T(random())/T(RAND_MAX)) * voxel_len;
-              T py = T(j) * voxel_len + (T(random())/T(RAND_MAX)) * voxel_len;
-              T pz = T(k) * voxel_len + (T(random())/T(RAND_MAX)) * voxel_len;
-              T vx = voxel_len * T(50);
-              T vy = 0;
-              T vz = 0;
-              particles.AddParticle(common::ParticleData<T>({
-                .position = common::Vec3<T>(px,py,pz),
-                .velocity = common::Vec3<T>(vx,vy,vz)
-              }));
-              ++pi;
-            }  // while pi
-          }  // for k
-        }  // for j
-    };  // WaterFall
-  sources_.push_back(WaterFall);
-*/
-}  // SetWaterFallSource
+void FlipSimulation<N1, N2, T>::SetForces(const common::Vec3<T> &f) {
+  fx_ = f.x();
+  fy_ = f.y();
+  fz_ = f.z();
+}  // SetForces
+
+template<common::Index N1, common::Index N2, typename T>
+void FlipSimulation<N1, N2, T>::SetBoxBoundary() {
+  common::Coord start = metagrid_.start();
+  common::Coord end = metagrid_.end();
+  common::Coord global_dims = metagrid_.global_dims();
+  // x component, lower
+  if (start.x() == 0) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(-1,j,k, 1);
+    }  // for k
+    }  // for j
+  }  // if start.x() == 0
+  // x component, upper
+  if (end.x()+1 == global_dims[0]) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(global_dims[0],j,k, 1);
+    }  // for k
+    }  // for j
+  }  // if end.x()+1 == global_dims[0]
+  // y component, lower
+  if (start.y() == 0) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(i,-1,k, 1);
+    }  // for k
+    }  // for i
+  }  // if start.y() == 0
+  // y component, upper
+  if (end.y()+1 == global_dims[1]) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(i,global_dims[1],k, 1);
+    }  // for k
+    }  // for i
+  }  // if end.y()+1 == global_dims[1]
+  // z component, lower
+  if (start.z() == 0) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+      grid_solid_->set(i,j,-1, 1);
+    }  // for k
+    }  // for i
+  }  // if start.z() == 0
+  // z component, upper
+  if (end.z()+1 == global_dims[2]) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+      grid_solid_->set(i,j,global_dims[2], 1);
+    }  // for k
+    }  // for i
+  }  // if end.z()+1 == 0
+}  // SetBoxBoundary
+
+// Only stationary solids supported right now --- grid_solid_ stores the mask.
+// This mask does not change with time.
+// This mask is used to enforce that normal velocity at solid interfaces is
+// zero, and used to set grid_marker_ which is used for enforcing
+// incompressiblity.
+template<common::Index N1, common::Index N2, typename T>
+void FlipSimulation<N1, N2, T>::AddSolidCuboid(const common::CoordBBox &box) {
+  common::CoordBBox domain = metagrid_.bbox();
+  // Expand the domain by 1 to capture solid neighbors for fluid in this
+  // region.
+  domain.expand(1);
+  // Get intersection with solid cuboid and set that region.
+  domain.intersect(box); 
+  grid_solid_->fill(domain, 1, true);
+}  // AddSolidCuboid
+
+template<common::Index N1, common::Index N2, typename T>
+void FlipSimulation<N1, N2, T>::AddWaterSource(const Source<T> &source) {
+  sources_.push_back(source);
+}  // AddWaterSource
+
+template<common::Index N1, common::Index N2, typename T>
+void FlipSimulation<N1, N2, T>::SetTankBoundary() {
+  common::Coord start = metagrid_.start();
+  common::Coord end = metagrid_.end();
+  common::Coord global_dims = metagrid_.global_dims();
+  // x component, lower
+  if (start.x() == 0) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(-1,j,k, 1);
+    }  // for k
+    }  // for j
+  }  // if start.x() == 0
+  // x component, upper
+  if (end.x()+1 == global_dims[0]) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(global_dims[0],j,k, 1);
+    }  // for k
+    }  // for j
+  }  // if end.x()+1 == global_dims[0]
+  // y component, lower
+  if (start.y() == 0) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int k = start[2]-1; k <= end[2]+1; ++k) {
+      grid_solid_->set(i,-1,k, 1);
+    }  // for k
+    }  // for i
+  }  // if start.y() == 0
+  // No solid for upper y as it is an open tank
+  // z component, lower
+  if (start.z() == 0) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+      grid_solid_->set(i,j,-1, 1);
+    }  // for k
+    }  // for i
+  }  // if start.z() == 0
+  // z component, upper
+  if (end.z()+1 == global_dims[2]) {
+    for (int i = start[0]-1; i <= end[0]+1; ++i) {
+    for (int j = start[1]-1; j <= end[1]+1; ++j) {
+      grid_solid_->set(i,j,global_dims[2], 1);
+    }  // for k
+    }  // for i
+  }  // if end.z()+1 == 0
+}  // SetTankBoundary
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::ClearGridData() {
+  // Do not clear solids and sources.
   grid_velocity_->Clear(); 
   grid_velocity_update_->Clear();
   grid_weight_->Clear();
@@ -329,8 +391,8 @@ void FlipSimulation<N1, N2, T>::ClearGridData() {
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::Profile(
   float compute_time, float scatter_gather_time, bool use_geometric) {
-  assert(profile_ != nullptr);
-  assert(grid_marker_ != nullptr);
+  CHECK(profile_ != nullptr);
+  CHECK(grid_marker_ != nullptr);
   profile_->Clear();
   // Scaling factor.
   const common::Coord global_dims = metagrid_.global_dims();
@@ -398,7 +460,7 @@ template<common::Index N1, common::Index N2, typename T>
 T FlipSimulation<N1, N2, T>::CFL() {
   common::Coord start = metagrid_.start();
   common::Coord end = metagrid_.end();
-  common::Vec3<T> v_inf(0);
+  T v_inf = 0.0;
   for (typename VectorGridT::GridT::ValueOnCIter iter =
 	  grid_velocity_->data()->cbeginValueOn(); iter.test(); ++iter) {
     common::Coord c = iter.getCoord();
@@ -411,18 +473,18 @@ T FlipSimulation<N1, N2, T>::CFL() {
       continue;
     }
     if (c[1] != end[1] && c[2] != end[2]) {
-      v_inf[0] = fmax(v_inf[0], fabs((iter.getValue())[0]));
+      v_inf = fmax(v_inf, fabs((iter.getValue())[0]));
     }
     if (c[0] != end[0] && c[2] != end[2]) {
-      v_inf[1] = fmax(v_inf[1], fabs((iter.getValue())[1]));
+      v_inf = fmax(v_inf, fabs((iter.getValue())[1]));
     }
     if (c[0]!= end[0] && c[1] != end[1]) {
-      v_inf[2] = fmax(v_inf[2], fabs((iter.getValue())[2]));
+      v_inf = fmax(v_inf, fabs((iter.getValue())[2]));
     }
   }  // for iter
-  T v_max = fmax(gravity_, v_inf.dot(v_inf));
-  if (v_max < 1e-4) v_max = 1e-4;
-  return 1.0/sqrt(v_max);
+  T v = fmax(sqrt(0.5*gravity_), v_inf);
+  if (v < 1e-2) v = 1e-2;
+  return 1.0/v;
 }  // CFL
 
 template<common::Index N1, common::Index N2, typename T>
@@ -435,61 +497,21 @@ void FlipSimulation<N1, N2, T>::SaveGridVelocities() {
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::MoveParticles(T dt, bool defragment) {
-  particles_->template StepInGrid<VectorGridT, true, 1, 1>(*grid_velocity_, dt);
+  particles_->template StepInGrid<VectorGridT, true, 1, 1>(
+    *grid_velocity_, dt);
   particles_->EvaluateActiveBoundingBox();
 }  // MoveParticles
 
 template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::AddGravity(T dt, bool additional) {
-  if (config_ == 5) {
-    for (typename VectorGridT::GridT::ValueOnIter iter =
-      grid_velocity_->data()->beginValueOn(); iter.test(); ++iter) {
-      common::Vec3<T> v = iter.getValue();
-      v[0] += dt * fx_;
-      v[1] -= dt * fy_;
-      v[2] += dt * fz_;
-      iter.setValue(v);
-    }
-    return;
-  }
+void FlipSimulation<N1, N2, T>::AddGravity(T dt) {
   for (typename VectorGridT::GridT::ValueOnIter iter =
-	  grid_velocity_->data()->beginValueOn(); iter.test(); ++iter) {
-	common::Vec3<T> v = iter.getValue();
-	v[1] -= dt * gravity_;
-	iter.setValue(v);
-  }  // for iter
-  if (!additional) {
-    return;
+    grid_velocity_->data()->beginValueOn(); iter.test(); ++iter) {
+    common::Vec3<T> v = iter.getValue();
+    v[0] += dt * fx_;
+    v[1] -= dt * fy_;
+    v[2] += dt * fz_;
+    iter.setValue(v);
   }
-  // Disturbance
-  if (config_ == 3) {
-    if (applied_disturbance_ == disturbance_num_) {
-      return;
-    }
-    T fx = 0, fy = 0;
-    if (applied_disturbance_ > disturbance_num_/2) {
-      fy = 2*dt*gravity_;
-    } else {
-      fx = 4*dt*gravity_;
-      fy = 2*dt*gravity_;
-    }
-    const common::Coord global_dims = metagrid_.global_dims();
-    const int x4 = global_dims.x();
-    const int x1 = x4/8;
-    const int x2 = 3*x1;
-    const int dx = x4/16;
-    for (typename VectorGridT::GridT::ValueOnIter iter =
-      grid_velocity_->data()->beginValueOn(); iter.test(); ++iter) {
-      int x = iter.getCoord().x();
-      if ((x >= x1-dx && x <= x1+dx) || (x >= x2-dx && x <= x2+dx)) {
-        common::Vec3<T> v = iter.getValue();
-        v[1] += fy;
-        v[0] += fx;
-        iter.setValue(v);
-      }
-    }  // for iter
-    applied_disturbance_++;
-  }  // config_ == 3
 }  // AddGravity
 
 template<common::Index N1, common::Index N2, typename T>
@@ -633,91 +655,61 @@ void FlipSimulation<N1, N2, T>::ExtendVelocity() {
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::ApplyBoundaryConditions() {
-  common::Coord start = metagrid_.start();
-  common::Coord end = metagrid_.end();
-  common::Coord global_dims = metagrid_.global_dims();
-  // for loops are over end + 1 since this is a staggered mac grid =>
-  // one extra value.
-  // x component, lower
-  if (start.x() == 0) {
-    for (int j = start[1]; j <= end[1]+1; ++j) {
-    for (int k = start[2]; k <= end[2]+1; ++k) {
-      common::Coord lo(0,j,k);
-      if (!grid_source_->get(0,j,k)) {
-        grid_marker_->set(-1,j,k, common::SOLID);
-        SET_COMPONENT_TO_ZERO(lo, 0);
+  // Set solid marker, and velocity where there is solid to zero.
+  for (typename ScalarGridInt::GridT::ValueOnCIter iter =
+       grid_solid_->data()->cbeginValueOn(); iter.test(); ++iter) {
+    CHECK_EQ(iter.getValue(), 1);
+    const common::Coord c = iter.getCoord();
+    grid_marker_->set(c, common::SOLID);
+    // x lower
+    if (grid_solid_->get(c.x()-1, c.y(), c.z()) == 0) {
+      if (grid_velocity_->isOn(c)) {
+        common::Vec3<T> v = grid_velocity_->get(c);
+        v[0] = 0;
+        grid_velocity_->set(c, v);
       }
-    }  // for k
-    }  // for j
-  }  // if start.x() == 0
-  // x component, upper
-  if (end.x()+1 == global_dims[0]) {
-    for (int j = start[1]; j <= end[1]+1; ++j) {
-    for (int k = start[2]; k <= end[2]+1; ++k) {
-      common::Coord hi(global_dims[0],j,k);
-      if (!grid_source_->get(global_dims[0]-1,j,k)) {
-        grid_marker_->set(global_dims[0],j,k, common::SOLID);
-        SET_COMPONENT_TO_ZERO(hi, 0);
+    }
+    // y lower
+    if (grid_solid_->get(c.x(), c.y()-1, c.z()) == 0) {
+      if (grid_velocity_->isOn(c)) {
+        common::Vec3<T> v = grid_velocity_->get(c);
+        v[1] = 0;
+        grid_velocity_->set(c, v);
       }
-      // hacks
-      SET_COMPONENT_TO_ZERO(hi, 1);
-      SET_COMPONENT_TO_ZERO(hi, 2);
-    }  // for k
-    }  // for j
-  }  // if end.x()+1 == global_dims[0]
-  // y component, lower
-  if (start.y() == 0) {
-    for (int i = start[0]; i <= end[0]+1; ++i) {
-    for (int k = start[2]; k <= end[2]+1; ++k) {
-      common::Coord lo(i,0,k);
-      if (!grid_source_->get(i,0,k)) {
-        grid_marker_->set(i,-1,k, common::SOLID);
-        SET_COMPONENT_TO_ZERO(lo, 1);
+    }
+    // z lower
+    if (grid_solid_->get(c.x(), c.y(), c.z()-1) == 0) {
+      if (grid_velocity_->isOn(c)) {
+        common::Vec3<T> v = grid_velocity_->get(c);
+        v[2] = 0;
+        grid_velocity_->set(c, v);
       }
-    }  // for k
-    }  // for i
-  }  // if start.y() == 0
-  // y component, upper
-  if (end.y()+1 == global_dims[1]) {
-    for (int i = start[0]; i <= end[0]+1; ++i) {
-    for (int k = start[2]; k <= end[2]+1; ++k) {
-      common::Coord hi(i,global_dims[1],k);
-      if (!grid_source_->get(i,global_dims[1]-1,k)) {
-        grid_marker_->set(i,global_dims[1],k, common::SOLID);
-        SET_COMPONENT_TO_ZERO(hi, 1);
+    }
+    // x upper
+    if (grid_solid_->get(c.x()+1, c.y(), c.z()) == 0) {
+      if (grid_velocity_->isOn(c.x()+1, c.y(), c.z())) {
+        common::Vec3<T> v = grid_velocity_->get(c.x()+1, c.y(), c.z());
+        v[0] = 0;
+        grid_velocity_->set(c.x()+1, c.y(), c.z(), v);
       }
-      // hacks
-      SET_COMPONENT_TO_ZERO(hi, 0);
-      SET_COMPONENT_TO_ZERO(hi, 2);
-    }  // for k
-    }  // for i
-  }  // if end.y()+1 == global_dims[1]
-  // z component, lower
-  if (start.z() == 0) {
-    for (int i = start[0]; i <= end[0]+1; ++i) {
-    for (int j = start[1]; j <= end[1]+1; ++j) {
-      common::Coord lo(i,j,0);
-      if (!grid_source_->get(i,j,0)) {
-        grid_marker_->set(i,j,-1, common::SOLID);
-        SET_COMPONENT_TO_ZERO(lo, 2);
+    }
+    // y upper
+    if (grid_solid_->get(c.x(), c.y()+1, c.z()) == 0) {
+      if (grid_velocity_->isOn(c.x(), c.y()+1, c.z())) {
+        common::Vec3<T> v = grid_velocity_->get(c.x(), c.y()+1, c.z());
+        v[1] = 0;
+        grid_velocity_->set(c.x(), c.y()+1, c.z(), v);
       }
-    }  // for k
-    }  // for i
-  }  // if start.z() == 0
-  // z component, upper
-  if (end.z()+1 == global_dims[2]) {
-    for (int i = start[0]; i <= end[0]+1; ++i) {
-    for (int j = start[1]; j <= end[1]+1; ++j) {
-      common::Coord hi(i,j,global_dims[2]);
-      if (!grid_source_->get(i,j,global_dims[2]-1)) {
-        grid_marker_->set(i,j,global_dims[2], common::SOLID);
-        SET_COMPONENT_TO_ZERO(hi, 2);
+    }
+    // z upper
+    if (grid_solid_->get(c.x(), c.y(), c.z()+1) == 0) {
+      if (grid_velocity_->isOn(c.x(), c.y(), c.z()+1)) {
+        common::Vec3<T> v = grid_velocity_->get(c.x(), c.y(), c.z()+1);
+        v[2] = 0;
+        grid_velocity_->set(c.x(), c.y(), c.z()+1, v);
       }
-      SET_COMPONENT_TO_ZERO(hi, 0);
-      SET_COMPONENT_TO_ZERO(hi, 1);
-    }  // for k
-    }  // for i
-  }  // if end.z()+1 == 0
+    }
+  }  // for iter ... grid_solid_
 }  // ApplyBoundaryConditions
 
 template<common::Index N1, common::Index N2, typename T>
@@ -741,7 +733,6 @@ void FlipSimulation<N1, N2, T>::ComputeDivergence() {
 			}  // for k
 		}  // for j
   }  // for i
-  // grid_divergence_.Write("output/divergence", true);
 }  // ComputeDivergence
 
 template<common::Index N1, common::Index N2, typename T>
@@ -794,7 +785,12 @@ void FlipSimulation<N1, N2, T>::GetVelocityUpdate() {
 		for (int j = start[1]; j <= end[1]+1; ++j) {
 			for (int k = start[2]; k <= end[2]+1; ++k) {
         const common::Coord ci(i,j,k);
-        if (grid_velocity_->isOn(ci) || grid_velocity_update_->isOn(ci)) {
+        if (grid_velocity_->isOn(ci) && !grid_velocity_update_->isOn(ci)) {
+          CHECK(false) << common::ToString(ci) << " "
+                       << common::ToString(start) << " "
+                       << common::ToString(end);
+        }
+        if (grid_velocity_->isOn(ci) && grid_velocity_update_->isOn(ci)) {
           const common::Vec3<T> update =
             grid_velocity_->get(ci) - grid_velocity_update_->get(ci);
           grid_velocity_update_->set(ci, update);
@@ -1198,16 +1194,91 @@ void FlipSimulation<N1, N2, T>::ResampleParticles() {
 }
 
 template<common::Index N1, common::Index N2, typename T>
+void FlipSimulation<N1, N2, T>::DeleteParticlesInSolids() {
+  particles_->DeleteParticlesInSolids(*grid_solid_);
+}  // DeleteParticlesInSolids
+
+template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::DeleteOutsideParticles() {
   particles_->DeleteOutsideParticles();
 }  // DeleteOutsideParticles
 
 template<common::Index N1, common::Index N2, typename T>
-void FlipSimulation<N1, N2, T>::SetContributionFromSources() {
-  for (size_t i = 0; i < sources_.size(); ++i) {
-    sources_[i]();
-  }
-}  // SetContributionFromSources
+void FlipSimulation<N1, N2, T>::AddContributionFromSources(T t) {
+  for (const auto source : sources_) {
+    if (!source.is_active(t)) {
+      continue;
+    }
+    // Mark regions that are covered by sources as fluid and set the velocity.
+    const common::Vec3<T> velocity = source.get_velocity(t);
+    const common::Cube<T> box = source.get_box(t);
+    const common::Vec3<T> lo = box.get_start();
+    const common::Vec3<T> hi = box.get_end();
+    const common::Coord start_source(lo[0], lo[1], lo[2]);
+    const common::Coord end_source(hi[0], hi[1], hi[2]);
+    common::CoordBBox domain = metagrid_.bbox();
+    domain.intersect(common::CoordBBox(start_source, end_source));
+    const common::Coord start = domain.min();
+    const common::Coord end = domain.max();
+    for (int i = start[0]; i <= end[0]; ++i) {
+      for (int j = start[1]; j <= end[1]; ++j) {
+        for (int k = start[2]; k <= end[2]; ++k) {
+          common::Vec3<T> cell_origin(
+            voxel_len_*T(i), voxel_len_*T(j), voxel_len_*T(k));
+          // Mark grid as fluid.
+          grid_marker_->set(i,j,k, common::FLUID);
+          // Set grid velocity.
+          {
+            // x lower, y lower, z lower
+            grid_velocity_->set(i,j,k, velocity);
+            // x upper
+            common::Vec3<T> vx = grid_velocity_->get(i+1,j,k);
+            vx[0] = velocity[0];
+            grid_velocity_->set(i+1,j,k, vx);
+            // y upper
+            common::Vec3<T> vy = grid_velocity_->get(i,j+1,k);
+            vy[1] = velocity[1];
+            grid_velocity_->set(i,j+1,k, vy);
+            // x upper
+            common::Vec3<T> vz = grid_velocity_->get(i,j,k+1);
+            vz[2] = velocity[2];
+            grid_velocity_->set(i,j,k+1, vz);
+          }
+          // Add particles.
+          const int max_attempts = 32;
+          int pi = 0;
+           for (int num_attempts = 0;
+                num_attempts < max_attempts && pi < num_particles_per_cell_;
+                ++num_attempts) {
+            T px = cell_origin.x() + (T(random())/T(RAND_MAX)) * voxel_len_;
+            T py = cell_origin.y() + (T(random())/T(RAND_MAX)) * voxel_len_;
+            T pz = cell_origin.z() + (T(random())/T(RAND_MAX)) * voxel_len_;
+            common::Vec3<T> ppos(px, py, pz);
+            if (!box.IsInside(ppos)) {
+              continue;
+            }
+            ParticleData pd =
+              { .position = ppos, .velocity = velocity,
+                .grid_velocity = velocity };
+            particles_->AddParticleToData(i, j, k, pd);
+            ++pi;
+          }  // for num_attempts
+        }  // for k
+      }  // for j
+    }  // for i
+  }  // for source
+}  // AddContributionFromSources
+
+template<common::Index N1, common::Index N2, typename T>
+void FlipSimulation<N1, N2, T>::DeleteFluidInSources(T t) {
+  std::vector< common::Cube<T> > regions;
+  for (auto source : sources_) {
+    const common::Cube<T> box = source.get_box(t);
+    regions.push_back(box);
+  }  // for source
+  // Only delete particles. Rest of the grid quantities will be reset anyways.
+  particles_->DeleteParticlesFromRegions(regions);
+}  // DeleteFluidInSources
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::SaveDataToFile() {
@@ -1215,10 +1286,10 @@ void FlipSimulation<N1, N2, T>::SaveDataToFile() {
   char frame_number_c[10];
   sprintf(frame_number_c, "%08d", frame_);
   std::string frame_number(frame_number_c);
-  grid_velocity_->Write(grid_velocity_prefix_ + frame_number);
-  grid_phi_->Write(grid_phi_prefix_ + frame_number);
-  particles_->Write(particle_prefix_ + frame_number);
-}
+  //grid_velocity_->Write(grid_velocity_prefix_ + frame_number);
+  //grid_phi_->Write(grid_phi_prefix_ + frame_number);
+  particles_->Write(particle_prefix_ + frame_number, false);
+}  // SaveDataToFile
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::SaveDebugDataToFile() {
@@ -1242,7 +1313,7 @@ void FlipSimulation<N1, N2, T>::SaveDebugDataToFile() {
     grid_pressure_->Write(debug_grid_phi_prefix_ + debug_step_str);
   }
   debug_step_++;
-}
+}  // SaveDebugDataToFile
 
 template<common::Index N1, common::Index N2, typename T>
 void FlipSimulation<N1, N2, T>::NextFrame() {

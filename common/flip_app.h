@@ -1,6 +1,8 @@
 #ifndef PROJECTS_FLIP_LB_FLIP_APP_H
 #define PROJECTS_FLIP_LB_FLIP_APP_H
 
+#include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -12,12 +14,16 @@
 #include "common/primitives.h"
 #include "common/scalar_grid.h"
 #include "common/solver_driver.h"
+#include "common/sources.h"
 #include "common/vector_grid.h"
 
 namespace application {
 
 typedef float T;
 class FlipDriver;
+typedef common::Shape<T> ShapeT;
+typedef common::Cube<T> CubeT;
+typedef common::Sphere<T> SphereT;
 
 struct ProfileParameters {
   int total_workers = 0;  // actual number of workers, MUST PROVIDE
@@ -41,9 +47,7 @@ struct SimulationParameters {
   T frame_step = 1.0/30;  //  invserse fps (time)
   int cfl = 3;  // cfl value to use
 
-  int init = 1;  // init configuration to use
-  T gravity = 9.8;  // gravity
-  common::Vec3<T> start, end, force; // initial condition parameters
+  std::string init_file;
 
   int solver_max_iterations = 1500;
   T solver_threshold = 0.5*1e-8;
@@ -54,6 +58,27 @@ struct SimulationParameters {
   bool output = false;  // whether to save output
   bool debug = false;  // debug mode
 };  // struct SimulationParameters
+
+struct Fluid {
+  std::shared_ptr<ShapeT> shape;
+  common::Vec3<T> velocity;
+};  // Fluid
+
+struct Solid {
+  std::shared_ptr<ShapeT> shape;
+};  // Solid
+
+struct SimulationConfiguration {
+  int fluid = 1;
+  int boundary = 0;
+  // Default gravity value for 32-cubed, scaled as per dimensions during
+  // actual initialization of FlipSimulation.
+  T gravity = 9.8;
+  common::Vec3<T> force;
+  std::vector<Fluid> additional_fluids;
+  std::vector< Source<T> > sources;
+  std::vector<Solid> solids;
+};  // struct SimulationConfiguration
 
 class FlipApp : public canary::CanaryApplication {
   friend class FlipDriver;
@@ -72,11 +97,17 @@ class FlipApp : public canary::CanaryApplication {
     // Set which variables may be migrated.
     virtual void SetMigratableVariables();
 
+    // Parse simulation configuration
+    // (sources, solids, additional fluid, forces).
+    void ParseSimulationConfiguration(const std::string init_file);
+
   protected:
     // Simulation parameters.
     SimulationParameters params_;
     // Profile parameters.
     ProfileParameters profile_params_;
+    // Simulation configuration to use.
+    SimulationConfiguration config_;
     // Number of frames to simulate.
     int total_frames_ = 60;
 
@@ -108,6 +139,7 @@ class FlipDriver {
     FlipDriver(FlipApp *flip_app,
                const SimulationParameters &params,
                const ProfileParameters &profile_params,
+               const SimulationConfiguration &config,
                std::string name_str = "unnamed");
     ~FlipDriver();
 
@@ -118,6 +150,8 @@ class FlipDriver {
     SimulationParameters params_;
     // Profiling parameters.
     ProfileParameters profile_params_;
+    // Simulation configuration.
+    SimulationConfiguration config_;
 
     // Debug name
     std::string name_ = "unnamed";
@@ -198,10 +232,16 @@ class FlipDriver {
     void SaveData();
     void SaveDebugData();  // does nothing if app is not in debug mode
 
+    // Initialize different configurations.
+
     // While current time < time to advance to, compute dt and update time.
     void WhileAndComputeDt();
     // Advance time.
     void AdvanceTime();
+    // Add source particles/mark cells and set velocity.
+    void AddSources();
+    // Delete fluid from sources.
+    void DeleteSources();
     // Move particles in grid velocity.
     void MoveParticles();
     // Clear grid data.
@@ -224,24 +264,25 @@ class FlipDriver {
 
   protected:
     // Handles to variables.
-    VariableHandle<T> *advanced_time_;
-    VariableHandle<T> *global_advanced_time_;
-    VariableHandle<T> *local_dt_;
-    VariableHandle<T> *global_dt_;
-    VariableHandle<T> *step_;
-    VariableHandle<FlipSimulationT> *simulation_;
-    VariableHandle<VectorGridT> *grid_velocity_;
-    VariableHandle<VectorGridT> *grid_velocity_update_;
-    VariableHandle<VectorGridT> *grid_weight_;
-    VariableHandle<ScalarGridT> *grid_phi_;
-    VariableHandle<ScalarGridT> *grid_divergence_;
-    VariableHandle<ScalarGridT> *grid_pressure_;
-    VariableHandle<ScalarGridInt> *grid_marker_;
-    VariableHandle<ScalarGridBool> *grid_source_;
-    VariableHandle<ParticlesT> *particles_;
+    VariableHandle<T> *advanced_time_ = nullptr;
+    VariableHandle<T> *global_advanced_time_ = nullptr;
+    VariableHandle<T> *local_dt_ = nullptr;
+    VariableHandle<T> *global_dt_ = nullptr;
+    VariableHandle<T> *step_ = nullptr;
+    VariableHandle<FlipSimulationT> *simulation_ = nullptr;
+    VariableHandle<VectorGridT> *grid_velocity_ = nullptr;
+    VariableHandle<VectorGridT> *grid_velocity_update_ = nullptr;
+    VariableHandle<VectorGridT> *grid_weight_ = nullptr;
+    VariableHandle<ScalarGridT> *grid_phi_ = nullptr;
+    VariableHandle<ScalarGridT> *grid_divergence_ = nullptr;
+    VariableHandle<ScalarGridT> *grid_pressure_ = nullptr;
+    VariableHandle<ScalarGridInt> *grid_marker_ = nullptr;
+    VariableHandle<ScalarGridInt> *grid_solid_ = nullptr;
+    VariableHandle<ScalarGridBool> *grid_source_ = nullptr;
+    VariableHandle<ParticlesT> *particles_ = nullptr;
     // Profiling variables
-    VariableHandle<common::ProfileSliceLocal> *local_distribution_;
-    VariableHandle<common::FluidDistribution> *global_distribution_;
+    VariableHandle<common::ProfileSliceLocal> *local_distribution_ = nullptr;
+    VariableHandle<common::FluidDistribution> *global_distribution_ = nullptr;
 
     // String names for variables.
     const static std::string local_dt_str_;
@@ -255,6 +296,7 @@ class FlipDriver {
     const static std::string grid_divergence_str_;
     const static std::string grid_pressure_str_;
     const static std::string grid_marker_str_;
+    const static std::string grid_solid_str_;
     const static std::string grid_source_str_;
     const static std::string particles_str_;
     const static std::string local_distribution_str_;

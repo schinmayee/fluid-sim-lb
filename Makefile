@@ -1,5 +1,5 @@
-.PHONY: common projects
-all: common projects
+.PHONY: common
+all: common
 
 common:
 	$(MAKE) -C common

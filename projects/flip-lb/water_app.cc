@@ -23,22 +23,24 @@ void WaterApp::Program() {
 
   // Parameters for coarse simulation.
   SimulationParameters coarse_params = params_;
+  SimulationConfiguration config = config_;
   for (int d = 0; d < 3; ++d) {
     coarse_params.global_dims[d] = params_.global_dims[d]/coarse_scale_down_;
   }
   coarse_params.partitions = coarse_partitions_;
   int coarse_cfl = std::ceil(params_.cfl * 1.0 / coarse_scale_down_);
   coarse_params.cfl = coarse_cfl;
-  coarse_params.gravity = params_.gravity/T(coarse_scale_down_);
+  config.gravity /= T(coarse_scale_down_);
   coarse_params.solver_max_iterations = params_.solver_max_iterations/coarse_scale_down_ + 1;
   coarse_params.output = false;
   coarse_params.debug = false;
 
   // Coarse and main simulation.
   coarse_sim_ = new CoarseSimulationDriver(
-      this, coarse_params, profile_params_, "Coarse");
+      this, coarse_params, profile_params_, config_, "Coarse");
   coarse_sim_->set_global_profile(true);
-  main_sim_ = new MainSimulationDriver(this, params_, profile_params_, "Main");
+  main_sim_ = new MainSimulationDriver(
+      this, params_, profile_params_, config_, "Main");
   main_sim_->set_migratable(true);
 
   // Declare simulation variables and metadata.

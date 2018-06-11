@@ -1,0 +1,9 @@
+fluid : 0
+boundary : 1
+gravity : 6.0
+fluid-sphere : 0.3 0.8 0.4, 0.2, 0.0 -1.5 0.0
+fluid-cube : 0.0 0 0.0, 0.75 0.0625 0.75, 0.0 0.0 0.0
+solid : 0.625 0.0 0.0, 1.0 0.03125 1.0  # wall at x_hi
+solid : 0.0 0.0 0.625, 1.0 0.03125 1.0  # wall at z_hi
+solid : 0.75 0.0 0.0, 0.8125 1.0 1.0  # wall at x_hi
+solid : 0.0 0.0 0.75, 1.0 1.0 0.8125  # wall at z_hi
