@@ -4,11 +4,12 @@ OPENVDB_LIB_DIR := $(HOME)/installations/openvdb_v4_0/lib
 OPENVDB_LIB := -lopenvdb
 
 # The parent directory of the boost/ header directory
-BOOST_INCL_DIR := $(HOME)/installations/boost/include
+BOOST_INCL_DIR := $(HOME)/installations/boost
 # The directory containing libboost_iostreams, libboost_system, etc.
-BOOST_LIB_DIR := $(HOME)/installations/boost/lib
-BOOST_LIB := -lboost_iostreams -lboost_system
+BOOST_LIB_DIR := $(HOME)/installations/boost/stage/lib
+BOOST_LIB := -lboost_iostreams
 BOOST_LIB += -lboost_program_options -lboost_filesystem
+BOOST_LIB += -lboost_system
 
 # The parent directory of the OpenEXR/ header directory
 EXR_INCL_DIR := /usr/local/include
@@ -66,6 +67,11 @@ GLFW_LIB := -lglfw3 -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread
 # The major version number of the GLFW library
 # (header filenames changed between GLFW 2 and 3, so this must be specified explicitly)
 GLFW_MAJOR_VERSION := 3
+
+# Tetlib
+TET_LIB_INCL_DIR := $(HOME)/amr/libs/tetgen
+TET_LIB_DIR := $(HOME)/amr/libs/tetgen
+TET_LIB := -ltet
 
 # Cereal
 CEREAL_INCL_DIR := $(HOME)/research/runtimes/canary/build/dependency/include
