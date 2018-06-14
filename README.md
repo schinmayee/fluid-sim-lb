@@ -1,5 +1,7 @@
 # Load Balancing Fluid Simulations
 
+Updates and fixes to this code are avaiable on Github [here](https://github.com/schinmayee/fluid-sim-lb).
+
 The aim of this project is to load balance fluid simulations over dynamic data
 structures. This project includes code to distribute and load balance
 simulations using different strategies, and an implementation for a basic
