@@ -48,6 +48,9 @@ signed distance
 * `scripts` contains scripts to launch experiments on Google cloud, collect
 results and parse log files
 
+* `scripts/experiments` contains sample configuration files for the Google
+cloud scripts
+
 
 ## Building
 
